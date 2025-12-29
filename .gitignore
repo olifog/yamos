@@ -1,0 +1,18 @@
+# i love to push secrets to git
+.env
+
+# rust
+target
+
+# swapfiles
+*.swp
+*.swo
+
+# nix
+result
+result
+.direnv
+.devenv
+
+# ro's insane asylum
+DEVELOPMENT.md

@@ -1,0 +1,267 @@
+use super::handlers::OAuthAppState;
+use axum::{
+    extract::{Query, State},
+    http::StatusCode,
+    response::{Html, IntoResponse, Redirect, Response},
+};
+use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use serde::Deserialize;
+use sha2::{Digest, Sha256};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use uuid::Uuid;
+
+/// Stores pending auth requests (in-memory, doesn't persist)
+#[derive(Clone, Default)]
+pub struct AuthorizationStore {
+    pending: Arc<RwLock<HashMap<String, PendingAuthorization>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct PendingAuthorization {
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub code_challenge: String,
+    pub code_challenge_method: String,
+    pub state: Option<String>,
+    pub created_at: std::time::Instant,
+}
+
+impl AuthorizationStore {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub async fn store_pending(&self, code: String, auth: PendingAuthorization) {
+        let mut pending = self.pending.write().await;
+        pending.insert(code, auth);
+    }
+
+    pub async fn take_pending(&self, code: &str) -> Option<PendingAuthorization> {
+        let mut pending = self.pending.write().await;
+        pending.remove(code)
+    }
+
+    /// boot out anything older than 10 mins
+    pub async fn cleanup_expired(&self) {
+        let mut pending = self.pending.write().await;
+        let now = std::time::Instant::now();
+        pending.retain(|_, auth| now.duration_since(auth.created_at).as_secs() < 600);
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthorizationRequest {
+    pub client_id: String,
+    pub redirect_uri: String,
+    pub response_type: String,
+    pub code_challenge: String,
+    pub code_challenge_method: Option<String>,
+    pub state: Option<String>,
+    pub scope: Option<String>,
+    pub resource: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AuthorizationApproval {
+    pub code: String,
+    pub approve: Option<String>,
+}
+
+/// Shows consent page - user clicks approve/deny
+pub async fn authorize_handler(
+    State(state): State<OAuthAppState>,
+    Query(req): Query<AuthorizationRequest>,
+) -> Response {
+    let store = &state.auth_store;
+    tracing::info!(
+        "Authorization request from client_id={}, redirect_uri={}",
+        req.client_id,
+        req.redirect_uri
+    );
+
+    // Validate response_type
+    if req.response_type != "code" {
+        return error_redirect(
+            &req.redirect_uri,
+            "unsupported_response_type",
+            "Only 'code' response type is supported",
+            req.state.as_deref(),
+        );
+    }
+
+    // Validate code_challenge_method (must be S256 per OAuth 2.1)
+    let method = req.code_challenge_method.as_deref().unwrap_or("S256");
+    if method != "S256" {
+        return error_redirect(
+            &req.redirect_uri,
+            "invalid_request",
+            "Only S256 code_challenge_method is supported",
+            req.state.as_deref(),
+        );
+    }
+
+    // Generate a temporary code for this authorization session
+    let temp_code = Uuid::new_v4().to_string();
+
+    // Store the pending authorization
+    let pending = PendingAuthorization {
+        client_id: req.client_id.clone(),
+        redirect_uri: req.redirect_uri.clone(),
+        code_challenge: req.code_challenge.clone(),
+        code_challenge_method: method.to_string(),
+        state: req.state.clone(),
+        created_at: std::time::Instant::now(),
+    };
+    store.store_pending(temp_code.clone(), pending).await;
+
+    // Clean up old authorizations
+    store.cleanup_expired().await;
+
+    // Show consent page
+    let html = consent_page(&req.client_id, &temp_code);
+    Html(html).into_response()
+}
+
+/// Handles the approve/deny button click
+pub async fn authorize_approval_handler(
+    State(state): State<OAuthAppState>,
+    Query(approval): Query<AuthorizationApproval>,
+) -> Response {
+    let store = &state.auth_store;
+    let code = &approval.code;
+
+    // Look up the pending authorization
+    let pending = match store.take_pending(code).await {
+        Some(p) => p,
+        None => {
+            tracing::warn!("Authorization code not found or expired: {}", code);
+            return (StatusCode::BAD_REQUEST, "Authorization session expired or invalid").into_response();
+        }
+    };
+
+    // Check if user approved
+    if approval.approve.as_deref() != Some("true") {
+        return error_redirect(
+            &pending.redirect_uri,
+            "access_denied",
+            "User denied the authorization request",
+            pending.state.as_deref(),
+        );
+    }
+
+    // Generate the actual authorization code
+    let auth_code = Uuid::new_v4().to_string();
+
+    // Store the authorization code (reuse temp code storage)
+    store.store_pending(auth_code.clone(), pending.clone()).await;
+
+    // redirect back with the authorization code
+    let mut redirect_url = pending.redirect_uri.clone();
+    redirect_url.push_str(if redirect_url.contains('?') { "&" } else { "?" });
+    redirect_url.push_str(&format!("code={}", urlencoding::encode(&auth_code)));
+    if let Some(state) = &pending.state {
+        redirect_url.push_str(&format!("&state={}", urlencoding::encode(state)));
+    }
+
+    tracing::info!(
+        "Authorization approved for client_id={}, redirecting to {}",
+        pending.client_id,
+        redirect_url
+    );
+
+    Redirect::temporary(&redirect_url).into_response()
+}
+
+/// PKCE verification - S256 only (as per OAuth 2.1)
+pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> bool {
+    let mut hasher = Sha256::new();
+    hasher.update(code_verifier.as_bytes());
+    let hash = hasher.finalize();
+    URL_SAFE_NO_PAD.encode(hash) == code_challenge
+}
+
+fn error_redirect(redirect_uri: &str, error: &str, description: &str, state: Option<&str>) -> Response {
+    let mut url = redirect_uri.to_string();
+    url.push_str(if url.contains('?') { "&" } else { "?" });
+    url.push_str(&format!(
+        "error={}&error_description={}",
+        error,
+        urlencoding::encode(description)
+    ));
+    if let Some(s) = state {
+        url.push_str(&format!("&state={}", s));
+    }
+    Redirect::temporary(&url).into_response()
+}
+
+fn consent_page(client_id: &str, code: &str) -> String {
+    format!(
+        r#"<!DOCTYPE html>
+<html>
+<head>
+    <title>Authorize MCP Client</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <style>
+        body {{
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            max-width: 400px;
+            margin: 100px auto;
+            padding: 20px;
+            text-align: center;
+        }}
+        h1 {{ color: #333; }}
+        .client-id {{
+            background: #f5f5f5;
+            padding: 10px;
+            border-radius: 4px;
+            font-family: monospace;
+            word-break: break-all;
+        }}
+        .buttons {{ margin-top: 30px; }}
+        button {{
+            padding: 12px 24px;
+            margin: 5px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }}
+        .approve {{
+            background: #0066cc;
+            color: white;
+        }}
+        .deny {{
+            background: #666;
+            color: white;
+        }}
+    </style>
+</head>
+<body>
+    <h1>Authorize Application</h1>
+    <p>The following application is requesting access to your MCP server:</p>
+    <div class="client-id">{}</div>
+    <p>Do you want to allow this application to access your Obsidian notes?</p>
+    <div class="buttons">
+        <a href="/authorize/callback?code={}&approve=true">
+            <button class="approve">Approve</button>
+        </a>
+        <a href="/authorize/callback?code={}&approve=false">
+            <button class="deny">Deny</button>
+        </a>
+    </div>
+</body>
+</html>"#,
+        html_escape(client_id),
+        code,
+        code
+    )
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
