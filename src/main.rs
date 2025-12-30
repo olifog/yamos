@@ -215,6 +215,7 @@ async fn run_sse_server_with_oauth(
         StreamableHttpServerConfig, StreamableHttpService,
     };
     use std::net::SocketAddr;
+    use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
 
@@ -259,7 +260,36 @@ async fn run_sse_server_with_oauth(
         base_url: base_url.clone(),
     };
 
+    // Rate limiting: 10 requests per second per IP, burst of 30
+    let governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(10)
+            .burst_size(30)
+            .finish()
+            .expect("Failed to build rate limiter config"),
+    );
+    let governor_limiter = governor_conf.limiter().clone();
+    let rate_limit_layer = GovernorLayer::new(governor_conf);
+
+    // Stricter rate limiting for auth endpoints: 5 requests per second, burst of 10
+    let auth_governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(5)
+            .burst_size(10)
+            .finish()
+            .expect("Failed to build auth rate limiter config"),
+    );
+    let auth_rate_limit_layer = GovernorLayer::new(auth_governor_conf);
+
     // public oauth endpoints - no auth required (that's the whole point)
+    // Rate-limited endpoints for auth (stricter limits on token/register)
+    let rate_limited_auth_routes = Router::new()
+        .route("/token", post(auth::oauth_token_handler))
+        .route("/register", post(auth::register_handler))
+        .layer(auth_rate_limit_layer)
+        .with_state(oauth_state.clone());
+
+    // Standard rate limiting for other OAuth endpoints
     let oauth_routes = Router::new()
         .route(
             "/.well-known/oauth-protected-resource",
@@ -271,25 +301,37 @@ async fn run_sse_server_with_oauth(
         )
         .route("/authorize", get(auth::authorize_handler))
         .route("/authorize/callback", get(auth::authorize_approval_handler))
-        .route("/token", post(auth::oauth_token_handler))
-        .route("/register", post(auth::register_handler))
         .with_state(oauth_state);
+
+    // Start background task to clean up rate limiter state
+    tokio::spawn({
+        let limiter = governor_limiter;
+        async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                limiter.retain_recent();
+            }
+        }
+    });
 
     let auth_config = auth::AuthMiddlewareConfig {
         oauth_service: oauth_service.clone(),
         base_url: base_url.clone(),
     };
 
-    // protected routes - jwt required
+    // protected routes - jwt required, with rate limiting
     let protected_routes =
         Router::new()
             .route_service("/", http_service)
             .layer(middleware::from_fn_with_state(
                 auth_config,
                 auth::jwt_auth_middleware,
-            ));
+            ))
+            .layer(rate_limit_layer);
 
-    let app = oauth_routes.merge(protected_routes);
+    let app = oauth_routes
+        .merge(rate_limited_auth_routes)
+        .merge(protected_routes);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("Server ready at {}", base_url);
@@ -311,10 +353,21 @@ async fn run_sse_server_legacy(
         StreamableHttpServerConfig, StreamableHttpService,
     };
     use std::net::SocketAddr;
+    use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
 
     tracing::info!("MCP server listening on http://{}", addr);
+
+    // Rate limiting: 10 requests per second per IP, burst of 30
+    let governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(10)
+            .burst_size(30)
+            .finish()
+            .expect("Failed to build rate limiter config"),
+    );
+    let rate_limit_layer = GovernorLayer::new(governor_conf);
 
     let session_manager = Arc::new(LocalSessionManager::default());
 
@@ -329,7 +382,8 @@ async fn run_sse_server_legacy(
         .route_service("/", http_service)
         .layer(middleware::from_fn(move |req, next| {
             auth::legacy_auth_middleware(req, next, token_arc.clone())
-        }));
+        }))
+        .layer(rate_limit_layer);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("Server ready at http://{}", addr);
@@ -346,10 +400,21 @@ async fn run_sse_server_no_auth(server: YamosServer, host: &str, port: u16) -> R
         StreamableHttpServerConfig, StreamableHttpService,
     };
     use std::net::SocketAddr;
+    use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
 
     let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
 
     tracing::info!("MCP server listening on http://{}", addr);
+
+    // Rate limiting: 10 requests per second per IP, burst of 30
+    let governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .per_second(10)
+            .burst_size(30)
+            .finish()
+            .expect("Failed to build rate limiter config"),
+    );
+    let rate_limit_layer = GovernorLayer::new(governor_conf);
 
     let session_manager = Arc::new(LocalSessionManager::default());
 
@@ -359,7 +424,9 @@ async fn run_sse_server_no_auth(server: YamosServer, host: &str, port: u16) -> R
         StreamableHttpServerConfig::default(),
     );
 
-    let app = Router::new().route_service("/", http_service);
+    let app = Router::new()
+        .route_service("/", http_service)
+        .layer(rate_limit_layer);
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("Server ready at http://{}", addr);
