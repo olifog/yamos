@@ -1,6 +1,7 @@
 use super::traits::{ClientInfo, CredentialValidator};
 use anyhow::{anyhow, Result};
 use async_trait::async_trait;
+use subtle::ConstantTimeEq;
 
 /// Static single-client validator (v1 implementation)
 /// Future: DatabaseClientValidator, LdapClientValidator, etc.
@@ -22,9 +23,16 @@ impl StaticClientValidator {
 impl CredentialValidator for StaticClientValidator {
     async fn validate(&self, client_id: &str, client_secret: &str) -> Result<ClientInfo> {
         // Constant-time comparison to prevent timing attacks
-        if constant_time_compare(client_id, &self.expected_client_id)
-            && constant_time_compare(client_secret, &self.expected_client_secret)
-        {
+        let id_matches: bool = client_id
+            .as_bytes()
+            .ct_eq(self.expected_client_id.as_bytes())
+            .into();
+        let secret_matches: bool = client_secret
+            .as_bytes()
+            .ct_eq(self.expected_client_secret.as_bytes())
+            .into();
+
+        if id_matches && secret_matches {
             Ok(ClientInfo {
                 client_id: client_id.to_string(),
                 scopes: vec![], // No scopes for now
@@ -37,19 +45,4 @@ impl CredentialValidator for StaticClientValidator {
             Err(anyhow!("Invalid client credentials"))
         }
     }
-}
-
-/// Constant-time string comparison to prevent timing attacks
-fn constant_time_compare(a: &str, b: &str) -> bool {
-    if a.len() != b.len() {
-        return false;
-    }
-
-    // can i just give a quick shoutout to fold. gotta be one of my favourite methods. you're
-    // telling me i can take everything i learned from python list comprehensions and do them to
-    // iterators in rust? coolest shit ever
-    a.bytes()
-        .zip(b.bytes())
-        .fold(0, |acc, (a, b)| acc | (a ^ b))
-        == 0
 }

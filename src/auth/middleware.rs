@@ -6,6 +6,7 @@ use axum::{
     response::{IntoResponse, Response},
 };
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 
 // If you're perusing this code, you can probably tell I'm pretty new to this stuff. There are like
 // 50 bajillion RFCs to read and and they're all like 50 bajillion lines long. technology
@@ -107,7 +108,8 @@ pub async fn legacy_auth_middleware(
     match auth_header {
         Some(header) if header.starts_with("Bearer ") => {
             let token = &header[7..];
-            if token == expected_token.as_str() {
+            // Use constant-time comparison to prevent timing attacks
+            if token.as_bytes().ct_eq(expected_token.as_bytes()).into() {
                 Ok(next.run(req).await)
             } else {
                 tracing::warn!("Invalid legacy authentication token");
