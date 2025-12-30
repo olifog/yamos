@@ -99,6 +99,32 @@ async fn handle_authorization_code_grant(state: &OAuthAppState, req: &TokenReque
         }
     };
 
+    // Verify redirect_uri matches (must match the one from the authorization request)
+    let redirect_uri = match &req.redirect_uri {
+        Some(uri) => uri,
+        None => {
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_request",
+                Some("Missing required parameter: redirect_uri"),
+            )
+        }
+    };
+
+    if redirect_uri != &pending.redirect_uri {
+        tracing::warn!(
+            "redirect_uri mismatch for client {}: expected '{}', got '{}'",
+            pending.client_id,
+            pending.redirect_uri,
+            redirect_uri
+        );
+        return error_response(
+            StatusCode::BAD_REQUEST,
+            "invalid_grant",
+            Some("redirect_uri mismatch"),
+        );
+    }
+
     // Verify PKCE
     if !verify_pkce(code_verifier, &pending.code_challenge) {
         tracing::warn!("PKCE verification failed for client {}", pending.client_id);
@@ -107,17 +133,6 @@ async fn handle_authorization_code_grant(state: &OAuthAppState, req: &TokenReque
             "invalid_grant",
             Some("PKCE verification failed"),
         );
-    }
-
-    // Verify redirect_uri matches if provided
-    if let Some(redirect_uri) = &req.redirect_uri {
-        if redirect_uri != &pending.redirect_uri {
-            return error_response(
-                StatusCode::BAD_REQUEST,
-                "invalid_grant",
-                Some("redirect_uri mismatch"),
-            );
-        }
     }
 
     // Issue token
