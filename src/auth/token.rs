@@ -1,4 +1,4 @@
-use super::traits::{Claims, TokenIssuer, TokenResponse, TokenValidator};
+use super::traits::{Claims, TokenIssuer, TokenResponse, TokenType, TokenValidator};
 use anyhow::{anyhow, Result};
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
@@ -43,7 +43,7 @@ impl TokenIssuer for JwtTokenIssuer {
 
         Ok(TokenResponse {
             access_token: token,
-            token_type: "Bearer".to_string(),
+            token_type: TokenType::Bearer,
             expires_in: duration.map(|d| d.as_secs()),
         })
     }

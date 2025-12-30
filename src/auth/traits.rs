@@ -1,7 +1,74 @@
 use anyhow::Result;
 use async_trait::async_trait;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use std::time::Duration;
+
+/// oauth 2.0 grant types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GrantType {
+    AuthorizationCode,
+    ClientCredentials,
+}
+
+impl fmt::Display for GrantType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            GrantType::AuthorizationCode => write!(f, "authorization_code"),
+            GrantType::ClientCredentials => write!(f, "client_credentials"),
+        }
+    }
+}
+
+/// oauth 2.0 response types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResponseType {
+    Code,
+}
+
+impl fmt::Display for ResponseType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ResponseType::Code => write!(f, "code"),
+        }
+    }
+}
+
+/// pkce code challenge methods
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CodeChallengeMethod {
+    S256,
+}
+
+impl Default for CodeChallengeMethod {
+    fn default() -> Self {
+        CodeChallengeMethod::S256
+    }
+}
+
+impl fmt::Display for CodeChallengeMethod {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CodeChallengeMethod::S256 => write!(f, "S256"),
+        }
+    }
+}
+
+/// oauth 2.0 token types
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TokenType {
+    Bearer,
+}
+
+impl fmt::Display for TokenType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            TokenType::Bearer => write!(f, "Bearer"),
+        }
+    }
+}
 
 // async_trait my beloved. this shit rocks
 
@@ -31,7 +98,7 @@ pub trait TokenValidator {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TokenResponse {
     pub access_token: String,
-    pub token_type: String,
+    pub token_type: TokenType,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub expires_in: Option<u64>, // seconds
 }

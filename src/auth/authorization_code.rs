@@ -1,4 +1,5 @@
 use super::handlers::OAuthAppState;
+use super::traits::{CodeChallengeMethod, ResponseType};
 use axum::{
     extract::{Query, State},
     http::{header, HeaderMap, StatusCode},
@@ -29,7 +30,7 @@ pub struct PendingAuthorization {
     pub client_id: String,
     pub redirect_uri: String,
     pub code_challenge: String,
-    pub code_challenge_method: String,
+    pub code_challenge_method: CodeChallengeMethod,
     pub state: Option<String>,
     pub created_at: std::time::Instant,
 }
@@ -223,9 +224,9 @@ impl AuthorizationStore {
 pub struct AuthorizationRequest {
     pub client_id: String,
     pub redirect_uri: String,
-    pub response_type: String,
+    pub response_type: ResponseType,
     pub code_challenge: String,
-    pub code_challenge_method: Option<String>,
+    pub code_challenge_method: Option<CodeChallengeMethod>,
     pub state: Option<String>,
     pub scope: Option<String>,
     pub resource: Option<String>,
@@ -270,27 +271,6 @@ pub async fn authorize_handler(
             .into_response();
     }
 
-    // validate response_type
-    if req.response_type != "code" {
-        return error_redirect(
-            &req.redirect_uri,
-            "unsupported_response_type",
-            "Only 'code' response type is supported",
-            req.state.as_deref(),
-        );
-    }
-
-    // Validate code_challenge_method (must be S256 per OAuth 2.1)
-    let method = req.code_challenge_method.as_deref().unwrap_or("S256");
-    if method != "S256" {
-        return error_redirect(
-            &req.redirect_uri,
-            "invalid_request",
-            "Only S256 code_challenge_method is supported",
-            req.state.as_deref(),
-        );
-    }
-
     // Generate a temporary code for this authorization session
     let temp_code = Uuid::new_v4().to_string();
 
@@ -299,7 +279,7 @@ pub async fn authorize_handler(
         client_id: req.client_id.clone(),
         redirect_uri: req.redirect_uri.clone(),
         code_challenge: req.code_challenge.clone(),
-        code_challenge_method: method.to_string(),
+        code_challenge_method: req.code_challenge_method.unwrap_or_default(),
         state: req.state.clone(),
         created_at: std::time::Instant::now(),
     };

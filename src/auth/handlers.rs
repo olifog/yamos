@@ -1,4 +1,5 @@
 use super::authorization_code::{verify_pkce, AuthorizationStore, ClientRegistry};
+use super::traits::GrantType;
 use super::OAuthService;
 use axum::{
     extract::State,
@@ -21,7 +22,7 @@ pub struct OAuthAppState {
 /// OAuth 2.0 token request (supports both grant types)
 #[derive(Debug, Deserialize)]
 pub struct TokenRequest {
-    pub grant_type: String,
+    pub grant_type: GrantType,
     /// Client ID (required for both grant types)
     pub client_id: Option<String>,
     /// Client secret (required for client_credentials, optional for authorization_code with PKCE)
@@ -48,14 +49,9 @@ pub async fn oauth_token_handler(
 ) -> Response {
     tracing::info!("Token request: grant_type={}", req.grant_type);
 
-    match req.grant_type.as_str() {
-        "authorization_code" => handle_authorization_code_grant(&state, &req).await,
-        "client_credentials" => handle_client_credentials_grant(&state, &req).await,
-        _ => error_response(
-            StatusCode::BAD_REQUEST,
-            "unsupported_grant_type",
-            Some("Supported grant types: authorization_code, client_credentials"),
-        ),
+    match req.grant_type {
+        GrantType::AuthorizationCode => handle_authorization_code_grant(&state, &req).await,
+        GrantType::ClientCredentials => handle_client_credentials_grant(&state, &req).await,
     }
 }
 
@@ -280,7 +276,7 @@ pub async fn metadata_handler(State(state): State<OAuthAppState>) -> Response {
 #[derive(Debug, Deserialize)]
 pub struct ClientRegistrationRequest {
     pub client_name: Option<String>,
-    pub grant_types: Option<Vec<String>>,
+    pub grant_types: Option<Vec<GrantType>>,
     pub redirect_uris: Option<Vec<String>>,
 }
 
@@ -291,7 +287,7 @@ pub struct ClientRegistrationResponse {
     pub client_secret: String,
     pub client_id_issued_at: i64,
     pub client_secret_expires_at: i64,
-    pub grant_types: Vec<String>,
+    pub grant_types: Vec<GrantType>,
 }
 
 /// Dynamic client registration (RFC 7591)
@@ -307,20 +303,6 @@ pub async fn register_handler(
         req.redirect_uris
     );
 
-    // Validate grant types if provided
-    let supported_grants = ["authorization_code", "client_credentials"];
-    if let Some(ref grant_types) = req.grant_types {
-        for gt in grant_types {
-            if !supported_grants.contains(&gt.as_str()) {
-                return error_response(
-                    StatusCode::BAD_REQUEST,
-                    "invalid_client_metadata",
-                    Some("Supported grant types: authorization_code, client_credentials"),
-                );
-            }
-        }
-    }
-
     // Generate new client credentials
     use uuid::Uuid;
     let client_id = format!("mcp-client-{}", Uuid::new_v4());
@@ -330,7 +312,7 @@ pub async fn register_handler(
 
     let grant_types = req
         .grant_types
-        .unwrap_or_else(|| vec!["authorization_code".to_string()]);
+        .unwrap_or_else(|| vec![GrantType::AuthorizationCode]);
 
     // register the client's redirect URIs so they can be validated later
     let redirect_uris = req.redirect_uris.clone().unwrap_or_default();
