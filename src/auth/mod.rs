@@ -6,7 +6,7 @@ mod token;
 mod traits;
 
 pub use authorization_code::{
-    authorize_approval_handler, authorize_handler, AuthorizationStore,
+    authorize_approval_handler, authorize_handler, AuthorizationStore, ClientRegistry,
 };
 pub use client_credentials::StaticClientValidator;
 pub use handlers::{

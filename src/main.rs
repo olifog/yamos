@@ -249,11 +249,13 @@ async fn run_sse_server_with_oauth(
 
     let oauth_service = Arc::new(auth::OAuthService::new(config));
     let auth_store = Arc::new(auth::AuthorizationStore::new());
+    let client_registry = Arc::new(auth::ClientRegistry::new());
 
     // Combined OAuth state for all handlers
     let oauth_state = auth::OAuthAppState {
         oauth_service: oauth_service.clone(),
         auth_store: auth_store.clone(),
+        client_registry: client_registry.clone(),
         base_url: base_url.clone(),
     };
 

@@ -7,15 +7,21 @@ use axum::{
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use url::Url;
 use uuid::Uuid;
 
-/// Stores pending auth requests (in-memory, doesn't persist)
+/// max pending authorisations before we start evicting old ones
+const MAX_PENDING_AUTHORISATIONS: usize = 1000;
+
+/// stores pending auth requests (in-memory, doesn't persist)
 #[derive(Clone, Default)]
 pub struct AuthorizationStore {
     pending: Arc<RwLock<HashMap<String, PendingAuthorization>>>,
+    /// track insertion order for LRU eviction
+    insertion_order: Arc<RwLock<VecDeque<String>>>,
 }
 
 #[derive(Clone, Debug)]
@@ -28,6 +34,123 @@ pub struct PendingAuthorization {
     pub created_at: std::time::Instant,
 }
 
+/// registry of clients and their allowed redirect URIs
+#[derive(Clone, Default)]
+pub struct ClientRegistry {
+    /// map of client_id -> allowed redirect URIs
+    clients: Arc<RwLock<HashMap<String, RegisteredClient>>>,
+}
+
+#[derive(Clone, Debug)]
+pub struct RegisteredClient {
+    pub client_id: String,
+    pub redirect_uris: Vec<String>,
+    pub created_at: std::time::Instant,
+}
+
+impl ClientRegistry {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// register a client with its allowed redirect URIs
+    pub async fn register(&self, client_id: String, redirect_uris: Vec<String>) {
+        let mut clients = self.clients.write().await;
+        clients.insert(
+            client_id.clone(),
+            RegisteredClient {
+                client_id,
+                redirect_uris,
+                created_at: std::time::Instant::now(),
+            },
+        );
+    }
+
+    /// check if a redirect_uri is valid for the given client
+    /// returns Ok(()) if valid, Err with reason if not
+    pub async fn validate_redirect_uri(
+        &self,
+        client_id: &str,
+        redirect_uri: &str,
+    ) -> Result<(), String> {
+        // first, validate the redirect_uri is a valid URL
+        let parsed = Url::parse(redirect_uri)
+            .map_err(|_| "invalid redirect_uri: not a valid URL".to_string())?;
+
+        // reject dangerous schemes
+        match parsed.scheme() {
+            "https" => {} // always allowed
+            "http" => {
+                // only allow http for localhost (development)
+                if let Some(host) = parsed.host_str() {
+                    if host != "localhost" && host != "127.0.0.1" && host != "[::1]" {
+                        return Err(
+                            "invalid redirect_uri: http only allowed for localhost".to_string()
+                        );
+                    }
+                }
+            }
+            scheme => {
+                // allow custom schemes for native apps (e.g., myapp://)
+                // but reject javascript:, data:, etc.
+                if scheme == "javascript" || scheme == "data" || scheme == "vbscript" {
+                    return Err(format!(
+                        "invalid redirect_uri: {} scheme not allowed",
+                        scheme
+                    ));
+                }
+            }
+        }
+
+        // check if client is registered
+        let clients = self.clients.read().await;
+        if let Some(client) = clients.get(client_id) {
+            // check if redirect_uri matches any registered URI
+            for registered_uri in &client.redirect_uris {
+                if Self::redirect_uri_matches(registered_uri, redirect_uri) {
+                    return Ok(());
+                }
+            }
+            Err("invalid redirect_uri: not registered for this client".to_string())
+        } else {
+            // client not registered - for backwards compat with static clients,
+            // we allow the request but log a warning. in strict mode, this would be an error.
+            tracing::warn!(
+                "client '{}' not found in registry, allowing redirect_uri '{}'",
+                client_id,
+                redirect_uri
+            );
+            Ok(())
+        }
+    }
+
+    /// check if a redirect_uri matches a registered pattern
+    /// supports exact match and localhost port wildcards
+    fn redirect_uri_matches(registered: &str, requested: &str) -> bool {
+        // exact match
+        if registered == requested {
+            return true;
+        }
+
+        // for localhost, allow any port if registered with port 0 or without port
+        if let (Ok(reg_url), Ok(req_url)) = (Url::parse(registered), Url::parse(requested)) {
+            if reg_url.scheme() == req_url.scheme() {
+                if let (Some(reg_host), Some(req_host)) = (reg_url.host_str(), req_url.host_str()) {
+                    // allow localhost port flexibility for development
+                    if (reg_host == "localhost" || reg_host == "127.0.0.1")
+                        && reg_host == req_host
+                        && reg_url.path() == req_url.path()
+                    {
+                        return true;
+                    }
+                }
+            }
+        }
+
+        false
+    }
+}
+
 impl AuthorizationStore {
     pub fn new() -> Self {
         Self::default()
@@ -35,19 +158,64 @@ impl AuthorizationStore {
 
     pub async fn store_pending(&self, code: String, auth: PendingAuthorization) {
         let mut pending = self.pending.write().await;
-        pending.insert(code, auth);
+        let mut order = self.insertion_order.write().await;
+
+        // evict oldest entries if at capacity
+        while pending.len() >= MAX_PENDING_AUTHORISATIONS {
+            if let Some(oldest_code) = order.pop_front() {
+                pending.remove(&oldest_code);
+                tracing::debug!(
+                    "evicted oldest pending authorisation due to capacity limit: {}",
+                    oldest_code
+                );
+            } else {
+                break;
+            }
+        }
+
+        pending.insert(code.clone(), auth);
+        order.push_back(code);
     }
 
     pub async fn take_pending(&self, code: &str) -> Option<PendingAuthorization> {
         let mut pending = self.pending.write().await;
+        let mut order = self.insertion_order.write().await;
+
+        // remove from insertion order tracking
+        order.retain(|c| c != code);
+
         pending.remove(code)
     }
 
     /// boot out anything older than 10 mins
     pub async fn cleanup_expired(&self) {
         let mut pending = self.pending.write().await;
+        let mut order = self.insertion_order.write().await;
         let now = std::time::Instant::now();
-        pending.retain(|_, auth| now.duration_since(auth.created_at).as_secs() < 600);
+
+        // collect expired codes
+        let expired: Vec<String> = pending
+            .iter()
+            .filter(|(_, auth)| now.duration_since(auth.created_at).as_secs() >= 600)
+            .map(|(code, _)| code.clone())
+            .collect();
+
+        // remove expired entries
+        for code in &expired {
+            pending.remove(code);
+        }
+
+        // clean up insertion order
+        order.retain(|code| !expired.contains(code));
+
+        if !expired.is_empty() {
+            tracing::debug!("cleaned up {} expired pending authorisations", expired.len());
+        }
+    }
+
+    /// get current count of pending authorisations (for monitoring)
+    pub async fn len(&self) -> usize {
+        self.pending.read().await.len()
     }
 }
 
@@ -81,7 +249,28 @@ pub async fn authorize_handler(
         req.redirect_uri
     );
 
-    // Validate response_type
+    // validate redirect_uri BEFORE we redirect anywhere
+    // this prevents open redirect attacks
+    if let Err(e) = state
+        .client_registry
+        .validate_redirect_uri(&req.client_id, &req.redirect_uri)
+        .await
+    {
+        tracing::warn!(
+            "rejected invalid redirect_uri '{}' for client '{}': {}",
+            req.redirect_uri,
+            req.client_id,
+            e
+        );
+        // DON'T redirect to the invalid URI - return an error page instead
+        return (
+            StatusCode::BAD_REQUEST,
+            format!("invalid redirect_uri: {}", e),
+        )
+            .into_response();
+    }
+
+    // validate response_type
     if req.response_type != "code" {
         return error_redirect(
             &req.redirect_uri,

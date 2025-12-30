@@ -1,4 +1,4 @@
-use super::authorization_code::{verify_pkce, AuthorizationStore};
+use super::authorization_code::{verify_pkce, AuthorizationStore, ClientRegistry};
 use super::OAuthService;
 use axum::{
     extract::State,
@@ -14,6 +14,7 @@ use std::sync::Arc;
 pub struct OAuthAppState {
     pub oauth_service: Arc<OAuthService>,
     pub auth_store: Arc<AuthorizationStore>,
+    pub client_registry: Arc<ClientRegistry>,
     pub base_url: String,
 }
 
@@ -59,7 +60,10 @@ pub async fn oauth_token_handler(
 }
 
 async fn handle_authorization_code_grant(state: &OAuthAppState, req: &TokenRequest) -> Response {
-    // Validate required parameters
+    // clean up expired authorisations (also done in authorize_handler, but oh well)
+    state.auth_store.cleanup_expired().await;
+
+    // validate required parameters
     let code = match &req.code {
         Some(c) => c,
         None => {
@@ -282,11 +286,15 @@ pub struct ClientRegistrationResponse {
 
 /// Dynamic client registration (RFC 7591)
 /// NB: credentials aren't persisted - they won't survive a restart
-pub async fn register_handler(Json(req): Json<ClientRegistrationRequest>) -> Response {
+pub async fn register_handler(
+    State(state): State<OAuthAppState>,
+    Json(req): Json<ClientRegistrationRequest>,
+) -> Response {
     tracing::info!(
-        "Dynamic client registration request: client_name={:?}, grant_types={:?}",
+        "dynamic client registration request: client_name={:?}, grant_types={:?}, redirect_uris={:?}",
         req.client_name,
-        req.grant_types
+        req.grant_types,
+        req.redirect_uris
     );
 
     // Validate grant types if provided
@@ -313,6 +321,15 @@ pub async fn register_handler(Json(req): Json<ClientRegistrationRequest>) -> Res
     let grant_types = req
         .grant_types
         .unwrap_or_else(|| vec!["authorization_code".to_string()]);
+
+    // register the client's redirect URIs so they can be validated later
+    let redirect_uris = req.redirect_uris.clone().unwrap_or_default();
+    if !redirect_uris.is_empty() {
+        state
+            .client_registry
+            .register(client_id.clone(), redirect_uris)
+            .await;
+    }
 
     let response = ClientRegistrationResponse {
         client_id: client_id.clone(),
