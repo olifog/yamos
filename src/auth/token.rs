@@ -30,7 +30,10 @@ impl TokenIssuer for JwtTokenIssuer {
         let claims = Claims {
             sub: client_id.to_string(),
             iat: now.timestamp(),
-            exp: duration.map(|d| (now + Duration::from_std(d).unwrap()).timestamp()),
+            exp: duration.map(|d| {
+                (now + Duration::from_std(d).expect("token expiration duration out of range"))
+                    .timestamp()
+            }),
             jti: Uuid::new_v4().to_string(),
             iss: "yamos".to_string(),
         };
