@@ -41,7 +41,9 @@ than that)
   prefix
 - **read_note** - read the content of any note
 - **write_note** - create or update notes
-- **append_to_note** - append content to existing notes (perfect for todos!)
+- **append_to_note** - append content to existing notes
+- **insert_lines** - insert content at a specific line number
+- **delete_lines** - delete a range of lines from a note
 - **delete_note** - remove notes from your vault
 
 - **batch_read_notes** - read a bunch of notes in one go

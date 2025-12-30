@@ -65,6 +65,26 @@ pub struct AppendNoteRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct InsertLinesRequest {
+    #[schemars(description = "Path to the note")]
+    pub path: String,
+    #[schemars(description = "Line number to insert at (1-indexed, content goes before this line)")]
+    pub line: usize,
+    #[schemars(description = "Content to insert (can be multiple lines)")]
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct DeleteLinesRequest {
+    #[schemars(description = "Path to the note")]
+    pub path: String,
+    #[schemars(description = "First line to delete (1-indexed, inclusive)")]
+    pub start_line: usize,
+    #[schemars(description = "Last line to delete (1-indexed, inclusive)")]
+    pub end_line: usize,
+}
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
 pub struct DeleteNoteRequest {
     #[schemars(description = "Path to the note to delete")]
     pub path: String,
@@ -244,6 +264,63 @@ impl YamosServer {
 
         Ok(CallToolResult::success(vec![Content::text(format!(
             "Successfully appended to {}",
+            req.path
+        ))]))
+    }
+
+    #[tool(
+        description = "Insert content at a specific line in a note. Line numbers are 1-indexed - content is inserted before the specified line. Use line 1 to insert at the start, or a line past the end to append."
+    )]
+    async fn insert_lines(
+        &self,
+        Parameters(req): Parameters<InsertLinesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        validate_note_path(&req.path)?;
+
+        if req.line == 0 {
+            return Err(mcp_error("Line number must be at least 1 (lines are 1-indexed)"));
+        }
+
+        self.db
+            .insert_lines(&req.path, req.line, &req.content)
+            .await
+            .map_err(|e| mcp_error(e.to_string()))?;
+
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Successfully inserted into {} at line {}",
+            req.path, req.line
+        ))]))
+    }
+
+    // TODO: return what text was deleted. 
+    // TODO: implement a "safe_delete_lines" that requires that the exact text to be deleted is
+    // also specified
+    #[tool(
+        description = "Delete a range of lines from a note. Line numbers are 1-indexed and inclusive on both ends."
+    )]
+    async fn delete_lines(
+        &self,
+        Parameters(req): Parameters<DeleteLinesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        validate_note_path(&req.path)?;
+
+        if req.start_line == 0 || req.end_line == 0 {
+            return Err(mcp_error("Line numbers must be at least 1 (lines are 1-indexed)"));
+        }
+        if req.start_line > req.end_line {
+            return Err(mcp_error("start_line cannot be greater than end_line"));
+        }
+
+        self.db
+            .delete_lines(&req.path, req.start_line, req.end_line)
+            .await
+            .map_err(|e| mcp_error(e.to_string()))?;
+
+        let count = req.end_line - req.start_line + 1;
+        Ok(CallToolResult::success(vec![Content::text(format!(
+            "Successfully deleted {} line{} from {}",
+            count,
+            if count == 1 { "" } else { "s" },
             req.path
         ))]))
     }
@@ -430,7 +507,7 @@ impl ServerHandler for YamosServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                "Obsidian vault access via CouchDB/LiveSync. Use tools to list, read, write, append to, or delete notes. Batch operations (batch_read_notes, batch_write_notes, batch_delete_notes, batch_append_to_notes) are available for operating on multiple notes at once.".to_string(),
+                "Obsidian vault access via CouchDB/LiveSync. Use tools to list, read, write, append, insert_lines, delete_lines, or delete notes. Batch operations available for multi-note ops.".to_string(),
             ),
         }
     }

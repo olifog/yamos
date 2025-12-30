@@ -406,6 +406,60 @@ impl CouchDbClient {
         self.save_note(id, &new_content).await
     }
 
+    pub async fn insert_lines(
+        &self,
+        id: &str,
+        line: usize,
+        content: &str,
+    ) -> Result<SaveResponse> {
+        let existing = self.get_note(id).await?;
+        let current_content = self.decode_content(&existing).await?;
+
+        let mut lines: Vec<&str> = current_content.lines().collect();
+
+        // if they ask for a line past the end, just append
+        let insert_idx = (line - 1).min(lines.len());
+
+        let new_lines: Vec<&str> = content.lines().collect();
+
+        for (i, new_line) in new_lines.into_iter().enumerate() {
+            lines.insert(insert_idx + i, new_line);
+        }
+
+        let new_content = lines.join("\n");
+        self.save_note(id, &new_content).await
+    }
+
+    pub async fn delete_lines(
+        &self,
+        id: &str,
+        start_line: usize,
+        end_line: usize,
+    ) -> Result<SaveResponse> {
+        let existing = self.get_note(id).await?;
+        let current_content = self.decode_content(&existing).await?;
+
+        let lines: Vec<&str> = current_content.lines().collect();
+
+        if start_line > lines.len() {
+            return Err(anyhow!("start_line {} is past end of file ({} lines)", start_line, lines.len()));
+        }
+
+        // keep lines before start and after end (1-indexed, inclusive range)
+        let new_lines: Vec<&str> = lines
+            .into_iter()
+            .enumerate()
+            .filter(|(i, _)| {
+                let line_num = i + 1;
+                line_num < start_line || line_num > end_line
+            })
+            .map(|(_, line)| line)
+            .collect();
+
+        let new_content = new_lines.join("\n");
+        self.save_note(id, &new_content).await
+    }
+
     /// soft-deletes a note by setting deleted: true (livesync expects this, not couchDB tombstones)
     pub async fn delete_note(&self, id: &str) -> Result<()> {
         let existing = self.get_note(id).await?;
