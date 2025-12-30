@@ -87,6 +87,7 @@
 
           packages = with pkgs; [
             cargo-update
+            cargo-edit
             curl
             jq
           ];
