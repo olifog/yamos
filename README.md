@@ -178,11 +178,11 @@ mcp.yourdomain.com {
 
 head over to claude.ai, go to settings → connectors → add custom connector
 
-- **name**: <whatever you want the connector to be called>
-- **url**: <https://whatever.your.url.is.yippee.tld>
+- **name**: whatever you want the connector to be called
+- **url**: https://whatever.your.url.is.yippee.tld
 - _advanced settings_:
-  - oauth client id: <your-oauth-client-id>
-  - **oauth client secret**: <your-oauth-client-secret>
+  - oauth client id: your-oauth-client-id
+  - **oauth client secret**: your-oauth-client-secret
 
 and that's it!! now you can be walking down the street, open claude on your
 phone and be like "hey add milk to my shopping list" and boom, it's in your
