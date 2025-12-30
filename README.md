@@ -285,7 +285,6 @@ each chunk is a separate document:
 - no support for attachments or binary files like images
 - dynamic client registration doesn't persist - credentials are generated but
   not stored anywhere, so they won't survive a server restart
-- no rate limiting on auth endpoints (probably fine for personal use)
 
 ## she hack on my thing til i contribute
 

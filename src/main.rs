@@ -215,16 +215,20 @@ async fn run_sse_server_with_oauth(
         StreamableHttpServerConfig, StreamableHttpService,
     };
     use std::net::SocketAddr;
-    use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+    use tower_governor::{
+        governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+    };
 
-    let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+    // we pass this to TcpListener::bind() which accepts ToSocketAddrs,
+    // so hostnames like "localhost" get resolved properly (unlike SocketAddr::parse)
+    let bind_addr = format!("{}:{}", host, port);
 
     // Use public URL if provided, otherwise use local address
     let base_url = public_url
         .map(|url| url.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| format!("http://{}", addr));
+        .unwrap_or_else(|| format!("http://{}:{}", host, port));
 
-    tracing::info!("MCP server listening on {}", addr);
+    tracing::info!("MCP server listening on {}", bind_addr);
     if let Some(public) = public_url {
         tracing::info!("Public URL: {}", public);
     }
@@ -261,8 +265,11 @@ async fn run_sse_server_with_oauth(
     };
 
     // Rate limiting: 10 requests per second per IP, burst of 30
+    // SmartIpKeyExtractor checks x-forwarded-for and friends before falling back to peer ip,
+    // so this works both behind cloudflare/nginx/whatever and when running locally
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
             .per_second(10)
             .burst_size(30)
             .finish()
@@ -274,6 +281,7 @@ async fn run_sse_server_with_oauth(
     // Stricter rate limiting for auth endpoints: 5 requests per second, burst of 10
     let auth_governor_conf = Arc::new(
         GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
             .per_second(5)
             .burst_size(10)
             .finish()
@@ -333,10 +341,16 @@ async fn run_sse_server_with_oauth(
         .merge(rate_limited_auth_routes)
         .merge(protected_routes);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("Server ready at {}", base_url);
 
-    axum::serve(listener, app).await?;
+    // into_make_service_with_connect_info gives us the peer ip for rate limiting fallback
+    // (SmartIpKeyExtractor checks headers first, but falls back to this if no proxy headers)
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -353,15 +367,18 @@ async fn run_sse_server_legacy(
         StreamableHttpServerConfig, StreamableHttpService,
     };
     use std::net::SocketAddr;
-    use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+    use tower_governor::{
+        governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+    };
 
-    let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+    let bind_addr = format!("{}:{}", host, port);
 
-    tracing::info!("MCP server listening on http://{}", addr);
+    tracing::info!("MCP server listening on http://{}", bind_addr);
 
     // Rate limiting: 10 requests per second per IP, burst of 30
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
             .per_second(10)
             .burst_size(30)
             .finish()
@@ -385,10 +402,14 @@ async fn run_sse_server_legacy(
         }))
         .layer(rate_limit_layer);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("Server ready at http://{}", addr);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    tracing::info!("Server ready at http://{}", bind_addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -400,15 +421,18 @@ async fn run_sse_server_no_auth(server: YamosServer, host: &str, port: u16) -> R
         StreamableHttpServerConfig, StreamableHttpService,
     };
     use std::net::SocketAddr;
-    use tower_governor::{governor::GovernorConfigBuilder, GovernorLayer};
+    use tower_governor::{
+        governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+    };
 
-    let addr: SocketAddr = format!("{}:{}", host, port).parse()?;
+    let bind_addr = format!("{}:{}", host, port);
 
-    tracing::info!("MCP server listening on http://{}", addr);
+    tracing::info!("MCP server listening on http://{}", bind_addr);
 
     // Rate limiting: 10 requests per second per IP, burst of 30
     let governor_conf = Arc::new(
         GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
             .per_second(10)
             .burst_size(30)
             .finish()
@@ -428,10 +452,14 @@ async fn run_sse_server_no_auth(server: YamosServer, host: &str, port: u16) -> R
         .route_service("/", http_service)
         .layer(rate_limit_layer);
 
-    let listener = tokio::net::TcpListener::bind(addr).await?;
-    tracing::info!("Server ready at http://{}", addr);
+    let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
+    tracing::info!("Server ready at http://{}", bind_addr);
 
-    axum::serve(listener, app).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
