@@ -83,7 +83,12 @@ fn unauthorized_response(base_url: &str, error: Option<&str>) -> Response {
         )
     };
 
-    headers.insert(header::WWW_AUTHENTICATE, www_auth.parse().unwrap());
+    headers.insert(
+        header::WWW_AUTHENTICATE,
+        www_auth
+            .parse()
+            .expect("WWW-Authenticate header value should be valid ASCII"),
+    );
 
     (StatusCode::UNAUTHORIZED, headers).into_response()
 }

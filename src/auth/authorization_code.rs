@@ -1,7 +1,7 @@
 use super::handlers::OAuthAppState;
 use axum::{
     extract::{Query, State},
-    http::StatusCode,
+    http::{header, HeaderMap, StatusCode},
     response::{Html, IntoResponse, Redirect, Response},
 };
 use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
@@ -308,9 +308,17 @@ pub async fn authorize_handler(
     // Clean up old authorizations
     store.cleanup_expired().await;
 
-    // Show consent page
+    // Show consent page with security headers
     let html = consent_page(&req.client_id, &temp_code);
-    Html(html).into_response()
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        "default-src 'self'; style-src 'unsafe-inline'".parse().unwrap(),
+    );
+    headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+    headers.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
+
+    (headers, Html(html)).into_response()
 }
 
 /// Handles the approve/deny button click
