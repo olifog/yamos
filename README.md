@@ -60,6 +60,11 @@ than that)
 - find some loser out there to do a proper security audit
 - nix module :)
 - cargo crate :)
+- handle encrypted vaults
+- support binary attachments (images and whatnot)
+- ?- persist credentials? dynamic client registration doesn't persist -
+  credentials are generated but not stored anywhere, so they won't survive a
+  server restart. but maybe this is good
 
 ## what you'll need
 
@@ -101,7 +106,8 @@ then head over to claude.ai → settings → connectors → add custom connector
 in your url and oauth credentials, and you're golden!
 
 **for the full setup guide** (oauth config, claude desktop, troubleshooting,
-etc): **[SETUP.md](SETUP.md)**
+etc): **[SETUP.md](SETUP.md)** (which doesn't exist yet and if you're reading
+this in jan 2026 onwards ping me cuz i probably forgot to push it
 
 ## ERM HOW DOES THE THING DO THE DO?
 
@@ -145,13 +151,6 @@ each chunk is a separate document:
   "type": "leaf"
 }
 ```
-
-## current limitations - ping me if you're desperate for me to unlimitationify it
-
-- can't handle encrypted vaults
-- no support for attachments or binary files like images
-- dynamic client registration doesn't persist - credentials are generated but
-  not stored anywhere, so they won't survive a server restart
 
 ## she hack on my thing til i contribute
 
