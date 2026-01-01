@@ -85,6 +85,10 @@ struct Args {
     /// Rate limit: burst size (max requests before limiting kicks in)
     #[arg(long, env = "RATE_LIMIT_BURST", default_value = "100")]
     rate_limit_burst: u32,
+
+    /// Base path for all routes, for hosting at a subpath
+    #[arg(long, env = "BASE_PATH", default_value = "")]
+    base_path: String,
 }
 
 #[tokio::main]
@@ -140,6 +144,14 @@ async fn main() -> Result<()> {
                 burst: args.rate_limit_burst,
             };
 
+            // normalise base_path: ensure it starts with / if non-empty, no trailing slash
+            let base_path = if args.base_path.is_empty() {
+                String::new()
+            } else {
+                let p = args.base_path.trim_matches('/');
+                format!("/{}", p)
+            };
+
             match auth_mode {
                 AuthMode::OAuth(config) => {
                     tracing::info!("OAuth 2.0 authentication enabled");
@@ -150,6 +162,7 @@ async fn main() -> Result<()> {
                         config,
                         args.public_url.as_deref(),
                         &rate_limit,
+                        &base_path,
                     )
                     .await?;
                 }
@@ -157,14 +170,14 @@ async fn main() -> Result<()> {
                     tracing::info!(
                         "Bearer token authentication enabled (consider migrating to OAuth)"
                     );
-                    run_sse_server_legacy(server, &args.host, args.port, token, &rate_limit)
+                    run_sse_server_legacy(server, &args.host, args.port, token, &rate_limit, &base_path)
                         .await?;
                 }
                 AuthMode::None => {
                     tracing::warn!(
                         "WARNING: No authentication enabled. Server is publicly accessible!"
                     );
-                    run_sse_server_no_auth(server, &args.host, args.port, &rate_limit).await?;
+                    run_sse_server_no_auth(server, &args.host, args.port, &rate_limit, &base_path).await?;
                 }
             }
         }
@@ -225,6 +238,7 @@ async fn run_sse_server_with_oauth(
     config: auth::AuthConfig,
     public_url: Option<&str>,
     rate_limit: &RateLimitConfig,
+    base_path: &str,
 ) -> Result<()> {
     use axum::{
         middleware,
@@ -240,14 +254,12 @@ async fn run_sse_server_with_oauth(
         governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
     };
 
-    // we pass this to TcpListener::bind() which accepts ToSocketAddrs,
-    // so hostnames like "localhost" get resolved properly (unlike SocketAddr::parse)
     let bind_addr = format!("{}:{}", host, port);
 
-    // Use public URL if provided, otherwise use local address
+    // base_url includes the base_path for OAuth metadata URLs
     let base_url = public_url
-        .map(|url| url.trim_end_matches('/').to_string())
-        .unwrap_or_else(|| format!("http://{}:{}", host, port));
+        .map(|url| format!("{}{}", url.trim_end_matches('/'), base_path))
+        .unwrap_or_else(|| format!("http://{}:{}{}", host, port, base_path));
 
     tracing::info!("MCP server listening on {}", bind_addr);
     if let Some(public) = public_url {
@@ -363,9 +375,16 @@ async fn run_sse_server_with_oauth(
             ))
             .layer(rate_limit_layer);
 
-    let app = oauth_routes
+    let all_routes = oauth_routes
         .merge(rate_limited_auth_routes)
         .merge(protected_routes);
+
+    // nest under base_path if set
+    let app = if base_path.is_empty() {
+        all_routes
+    } else {
+        Router::new().nest(base_path, all_routes)
+    };
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
     tracing::info!("Server ready at {}", base_url);
@@ -387,6 +406,7 @@ async fn run_sse_server_legacy(
     port: u16,
     token: String,
     rate_limit: &RateLimitConfig,
+    base_path: &str,
 ) -> Result<()> {
     use axum::{middleware, Router};
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -399,8 +419,9 @@ async fn run_sse_server_legacy(
     };
 
     let bind_addr = format!("{}:{}", host, port);
+    let base_url = format!("http://{}:{}{}", host, port, base_path);
 
-    tracing::info!("MCP server listening on http://{}", bind_addr);
+    tracing::info!("MCP server listening on {}", bind_addr);
     tracing::info!(
         "Rate limiting: {} req/sec, burst size {}",
         rate_limit.per_second,
@@ -426,15 +447,21 @@ async fn run_sse_server_legacy(
     );
 
     let token_arc = Arc::new(token);
-    let app = Router::new()
+    let routes = Router::new()
         .route_service("/", http_service)
         .layer(middleware::from_fn(move |req, next| {
             auth::legacy_auth_middleware(req, next, token_arc.clone())
         }))
         .layer(rate_limit_layer);
 
+    let app = if base_path.is_empty() {
+        routes
+    } else {
+        Router::new().nest(base_path, routes)
+    };
+
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    tracing::info!("Server ready at http://{}", bind_addr);
+    tracing::info!("Server ready at {}", base_url);
 
     axum::serve(
         listener,
@@ -450,6 +477,7 @@ async fn run_sse_server_no_auth(
     host: &str,
     port: u16,
     rate_limit: &RateLimitConfig,
+    base_path: &str,
 ) -> Result<()> {
     use axum::Router;
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
@@ -462,8 +490,9 @@ async fn run_sse_server_no_auth(
     };
 
     let bind_addr = format!("{}:{}", host, port);
+    let base_url = format!("http://{}:{}{}", host, port, base_path);
 
-    tracing::info!("MCP server listening on http://{}", bind_addr);
+    tracing::info!("MCP server listening on {}", bind_addr);
     tracing::info!(
         "Rate limiting: {} req/sec, burst size {}",
         rate_limit.per_second,
@@ -488,12 +517,18 @@ async fn run_sse_server_no_auth(
         StreamableHttpServerConfig::default(),
     );
 
-    let app = Router::new()
+    let routes = Router::new()
         .route_service("/", http_service)
         .layer(rate_limit_layer);
 
+    let app = if base_path.is_empty() {
+        routes
+    } else {
+        Router::new().nest(base_path, routes)
+    };
+
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;
-    tracing::info!("Server ready at http://{}", bind_addr);
+    tracing::info!("Server ready at {}", base_url);
 
     axum::serve(
         listener,
