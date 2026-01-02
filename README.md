@@ -2,19 +2,13 @@
 
 ![yamos helping haiku](assets/demo.gif)
 
-you want your little ai agent dude to look at your obsidian vault. your musings.
-your Ponderings. but other mcp servers only work locally, and your little ai
-friend can't access them remotely! woe is you! you cannot tell your little ai
-buddy pal to add milk to your shopping list from your phone while you are
-walking through croydon at 2am drunk on a monday morning!!
+you want your ai to be able to with your obsidian notes, right? remotely, right?
+via MRP, right? i gotchu
 
-fear not little one. you had the question, i have the answer (if you use
-obsidian livesync with couchdb backend)
-
-**introducing yamos**: set up an obsidian livesync server with couchdb as the
-storage backend, set up yamos (usually on the same host) with your couchdb
-credentials, and then configure an mcp connector on your little ai guy. ta-daaa,
-you can now get our ai overlords to interact with your notes from anywhere!!!!
+1. set up obsidian livesync to a couchdb server
+2. connect yamos to the couchdb server
+3. connect your ai to yamos via MRP
+4. profit
 
 tested with claude. ymmv with other ais. if it doesn't work with other ais then
 file an issue pl0x, if you are well-behaved maybe i will fix it
@@ -26,12 +20,8 @@ also nuke your obsidian vault. it might also be insecure in some way i havent
 considered. i have tried my best while writing this, but at the end of the day
 please accept that **_you are using it at your own risk._**
 
-if your vault has been nuked by this, feel free to raise an issue, but **_i will
-not help you get your vault back. back your stuff up regularly to some place
-where claude can't get to it. you have been warned._**
-
-(shoutout to restic. if you wanna back your stuff up, you cant get much better
-than that)
+if your vault has been nuked by this, feel free to raise an issue, but _i will
+not help you get your vault back._ **back your stuff up.** ever heard of restic
 
 ## features
 
@@ -49,9 +39,7 @@ than that)
 - **batch_read_notes** - read a bunch of notes in one go
 - **batch_write_notes** - create/update multiple notes at once
 - **batch_delete_notes** - nuke several notes
-- **batch_append_to_notes** - append to multiple notes (why? because what if i
-  need to add "- your mum" to "list of lovely women" and "done that" all at
-  once)
+- **batch_append_to_notes** - append to multiple notes
 
 all batch operations use partial success - if one note fails (bad path, doesn't
 exist, whatever), the others still go through. the error comes through in the
@@ -59,10 +47,9 @@ json report to your litle ai guy
 
 ### modes
 
-- **sse mode** (default): run as a web service for **claude.ai** - talk to
-  claude on your phone while walking around and add stuff to your todos!
-- stdio mode: run as a subprocess for **claude desktop**, to talk to whatever
-  your local obsidian client is talking to
+- **sse mode** (default): run as a web service that ais can talk to!
+- stdio mode: run as a subprocess for **desktop ai clients**, to talk to
+  whatever your local obsidian client is talking to
   - there are other obsidian mcp servers which were purpose-built for this - if
     you'll be doing this exclusively i'd recommend using one of those instead.
 
@@ -81,49 +68,23 @@ json report to your litle ai guy
 so before you get started, here's what you gotta have set up:
 
 - a couchdb instance running somewhere with obsidian-livesync all configured
-- obsidian on your various devices with the livesync plugin doing its thing
-- for sse mode: some way to expose the server to the internet (public url,
-  tailscale funnel, cloudflare tunnel, whatever)
+- obsidian on your various devices with the livesync plugin
+- for sse mode: some way to expose the server to the internet, so that the ai
+  provider's servers can talk to it
+  - tailscale funnel works pretty well if you don't have your own public url
 
-## getting started
+## this sounds cool!!! how do i make it work
 
-```bash
-# build the thing
-cargo build --release
+- [install and configure it](SETUP.MD)
+- connect your ai to it (e.g. ,
+  - claude: claude.ai → settings → connectors → add custom connector, put in
+    your url and oauth credentials **for the full setup guide** (oauth config)
+- "hey ai could you use yamos to list my notes"
 
-# make a little directory for it
-mkdir -p /opt/yamos
+## ERM HOW DOES IT WORK
 
-# copy the stuff over
-cp target/release/yamos /opt/yamos
-cp .env.example /opt/yamos/.env
-
-# fill in your stuff here! for how to do it, see next section.
-# replace vi with nano if you're a pleb
-# replace vi with helix if you're a psychopath
-vi /opt/yamos/.env
-
-cd /opt/yamos
-
-# run the thingy!
-./yamos
-
-# or if you want stdio mode for claude desktop:
-./yamos --transport stdio
-```
-
-then head over to claude.ai → settings → connectors → add custom connector, put
-in your url and oauth credentials, and you're golden!
-
-**for the full setup guide** (oauth config, claude desktop, troubleshooting,
-etc): **[SETUP.md](SETUP.md)** (which doesn't exist yet and if you're reading
-this in jan 2026 onwards ping me cuz i probably forgot to push it
-
-## ERM HOW DOES THE THING DO THE DO?
-
-okay so here's the deal with how everything fits together: (if you dont care
-about the specifics and just want your little computer friend to look at your
-obsidian stuff, you can ignore this section)
+if you dont care about the specifics and just want your little computer friend
+to look at your obsidian stuff, you can ignore this bit
 
 1. the server connects to your couchdb instance (that's where obsidian-livesync
    stores all your vault data)
@@ -161,6 +122,25 @@ each chunk is a separate document:
   "type": "leaf"
 }
 ```
+
+### http endpoints (sse mode)
+
+**mcp endpoints:**
+
+- `POST /` - streamable http endpoint for mcp protocol
+  - from the spec docs, i couldn't really figure out whether this was expected
+    to be / or /mcp or /sse. if anyone else can figure it out please let me know
+  - i considered just making this endpoint the fallback, but that feels a little
+    odd. but who knows, maybe that's normal
+
+**oauth endpoints:**
+
+- `GET /.well-known/oauth-protected-resource` - resource metadata (RFC 9728)
+- `GET /.well-known/oauth-authorization-server` - auth server metadata
+  (RFC 8414)
+- `GET /authorize` - authorization endpoint (shows consent page)
+- `POST /token` - token endpoint
+- `POST /register` - dynamic client registration (RFC 7591)
 
 ## she hack on my thing til i contribute
 
@@ -203,14 +183,6 @@ i am transgender
 i am transgender
 
 ### why is this whole readme lowercase
-
-i am transgender
-
-### why are you gay
-
-i am transgender
-
-### why
 
 i am transgender
 
