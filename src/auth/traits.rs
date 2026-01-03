@@ -37,15 +37,10 @@ impl fmt::Display for ResponseType {
 }
 
 /// pkce code challenge methods
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Default, Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum CodeChallengeMethod {
+    #[default]
     S256,
-}
-
-impl Default for CodeChallengeMethod {
-    fn default() -> Self {
-        CodeChallengeMethod::S256
-    }
 }
 
 impl fmt::Display for CodeChallengeMethod {

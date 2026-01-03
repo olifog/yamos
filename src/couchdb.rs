@@ -54,6 +54,7 @@ pub struct LeafDoc {
     pub doc_type: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct SaveResponse {
     pub ok: bool,
@@ -64,6 +65,7 @@ pub struct SaveResponse {
 #[derive(Debug, Deserialize)]
 pub struct AllDocsRow {
     pub id: String,
+    #[allow(dead_code)]
     pub key: String,
     pub value: AllDocsValue,
     // can be NoteDoc or LeafDoc, so we use Value and parse later
@@ -71,6 +73,7 @@ pub struct AllDocsRow {
     pub doc: Option<serde_json::Value>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct AllDocsValue {
     pub rev: String,
@@ -78,6 +81,7 @@ pub struct AllDocsValue {
     pub deleted: bool,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 pub struct AllDocsResponse {
     pub total_rows: u64,

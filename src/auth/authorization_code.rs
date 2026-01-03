@@ -30,6 +30,7 @@ pub struct PendingAuthorization {
     pub client_id: String,
     pub redirect_uri: String,
     pub code_challenge: String,
+    #[allow(dead_code)]
     pub code_challenge_method: CodeChallengeMethod,
     pub state: Option<String>,
     pub created_at: std::time::Instant,
@@ -44,8 +45,10 @@ pub struct ClientRegistry {
 
 #[derive(Clone, Debug)]
 pub struct RegisteredClient {
+    #[allow(dead_code)]
     pub client_id: String,
     pub redirect_uris: Vec<String>,
+    #[allow(dead_code)]
     pub created_at: std::time::Instant,
 }
 
@@ -83,12 +86,12 @@ impl ClientRegistry {
             "https" => {} // always allowed
             "http" => {
                 // only allow http for localhost (development)
-                if let Some(host) = parsed.host_str() {
-                    if host != "localhost" && host != "127.0.0.1" && host != "[::1]" {
-                        return Err(
-                            "invalid redirect_uri: http only allowed for localhost".to_string()
-                        );
-                    }
+                if let Some(host) = parsed.host_str()
+                    && host != "localhost"
+                    && host != "127.0.0.1"
+                    && host != "[::1]"
+                {
+                    return Err("invalid redirect_uri: http only allowed for localhost".to_string());
                 }
             }
             scheme => {
@@ -134,17 +137,16 @@ impl ClientRegistry {
         }
 
         // for localhost, allow any port if registered with port 0 or without port
-        if let (Ok(reg_url), Ok(req_url)) = (Url::parse(registered), Url::parse(requested)) {
-            if reg_url.scheme() == req_url.scheme() {
-                if let (Some(reg_host), Some(req_host)) = (reg_url.host_str(), req_url.host_str()) {
-                    // allow localhost port flexibility for development
-                    if (reg_host == "localhost" || reg_host == "127.0.0.1")
-                        && reg_host == req_host
-                        && reg_url.path() == req_url.path()
-                    {
-                        return true;
-                    }
-                }
+        if let (Ok(reg_url), Ok(req_url)) = (Url::parse(registered), Url::parse(requested))
+            && reg_url.scheme() == req_url.scheme()
+            && let (Some(reg_host), Some(req_host)) = (reg_url.host_str(), req_url.host_str())
+        {
+            // allow localhost port flexibility for development
+            if (reg_host == "localhost" || reg_host == "127.0.0.1")
+                && reg_host == req_host
+                && reg_url.path() == req_url.path()
+            {
+                return true;
             }
         }
 
@@ -152,6 +154,7 @@ impl ClientRegistry {
     }
 }
 
+#[allow(dead_code)]
 impl AuthorizationStore {
     pub fn new() -> Self {
         Self::default()
@@ -227,11 +230,14 @@ impl AuthorizationStore {
 pub struct AuthorizationRequest {
     pub client_id: String,
     pub redirect_uri: String,
+    #[allow(dead_code)]
     pub response_type: ResponseType,
     pub code_challenge: String,
     pub code_challenge_method: Option<CodeChallengeMethod>,
     pub state: Option<String>,
+    #[allow(dead_code)]
     pub scope: Option<String>,
+    #[allow(dead_code)]
     pub resource: Option<String>,
 }
 
