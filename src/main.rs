@@ -170,14 +170,22 @@ async fn main() -> Result<()> {
                     tracing::info!(
                         "Bearer token authentication enabled (consider migrating to OAuth)"
                     );
-                    run_sse_server_legacy(server, &args.host, args.port, token, &rate_limit, &base_path)
-                        .await?;
+                    run_sse_server_legacy(
+                        server,
+                        &args.host,
+                        args.port,
+                        token,
+                        &rate_limit,
+                        &base_path,
+                    )
+                    .await?;
                 }
                 AuthMode::None => {
                     tracing::warn!(
                         "WARNING: No authentication enabled. Server is publicly accessible!"
                     );
-                    run_sse_server_no_auth(server, &args.host, args.port, &rate_limit, &base_path).await?;
+                    run_sse_server_no_auth(server, &args.host, args.port, &rate_limit, &base_path)
+                        .await?;
                 }
             }
         }
@@ -241,9 +249,8 @@ async fn run_sse_server_with_oauth(
     base_path: &str,
 ) -> Result<()> {
     use axum::{
-        middleware,
+        Router, middleware,
         routing::{get, post},
-        Router,
     };
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
     use rmcp::transport::streamable_http_server::tower::{
@@ -251,7 +258,7 @@ async fn run_sse_server_with_oauth(
     };
     use std::net::SocketAddr;
     use tower_governor::{
-        governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+        GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
     };
 
     let bind_addr = format!("{}:{}", host, port);
@@ -366,14 +373,13 @@ async fn run_sse_server_with_oauth(
     };
 
     // protected routes - jwt required, with rate limiting
-    let protected_routes =
-        Router::new()
-            .route_service("/", http_service)
-            .layer(middleware::from_fn_with_state(
-                auth_config,
-                auth::jwt_auth_middleware,
-            ))
-            .layer(rate_limit_layer);
+    let protected_routes = Router::new()
+        .route_service("/", http_service)
+        .layer(middleware::from_fn_with_state(
+            auth_config,
+            auth::jwt_auth_middleware,
+        ))
+        .layer(rate_limit_layer);
 
     let all_routes = oauth_routes
         .merge(rate_limited_auth_routes)
@@ -408,14 +414,14 @@ async fn run_sse_server_legacy(
     rate_limit: &RateLimitConfig,
     base_path: &str,
 ) -> Result<()> {
-    use axum::{middleware, Router};
+    use axum::{Router, middleware};
     use rmcp::transport::streamable_http_server::session::local::LocalSessionManager;
     use rmcp::transport::streamable_http_server::tower::{
         StreamableHttpServerConfig, StreamableHttpService,
     };
     use std::net::SocketAddr;
     use tower_governor::{
-        governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+        GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
     };
 
     let bind_addr = format!("{}:{}", host, port);
@@ -486,7 +492,7 @@ async fn run_sse_server_no_auth(
     };
     use std::net::SocketAddr;
     use tower_governor::{
-        governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor, GovernorLayer,
+        GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
     };
 
     let bind_addr = format!("{}:{}", host, port);

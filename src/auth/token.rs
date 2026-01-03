@@ -1,7 +1,7 @@
 use super::traits::{Claims, TokenIssuer, TokenResponse, TokenType, TokenValidator};
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use chrono::{Duration, Utc};
-use jsonwebtoken::{decode, encode, Algorithm, DecodingKey, EncodingKey, Header, Validation};
+use jsonwebtoken::{Algorithm, DecodingKey, EncodingKey, Header, Validation, decode, encode};
 use uuid::Uuid;
 
 pub struct JwtTokenIssuer {

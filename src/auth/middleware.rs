@@ -1,7 +1,7 @@
 use super::OAuthService;
 use axum::{
     extract::{Request, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     middleware::Next,
     response::{IntoResponse, Response},
 };

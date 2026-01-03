@@ -105,10 +105,10 @@ pub struct TokenResponse {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Claims {
-    pub sub: String,      // Subject (client_id)
-    pub iat: i64,         // Issued at
+    pub sub: String, // Subject (client_id)
+    pub iat: i64,    // Issued at
     #[serde(skip_serializing_if = "Option::is_none")]
     pub exp: Option<i64>, // Expiration time
-    pub jti: String,      // JWT ID (unique identifier)
-    pub iss: String,      // Issuer
+    pub jti: String, // JWT ID (unique identifier)
+    pub iss: String, // Issuer
 }

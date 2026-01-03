@@ -1,5 +1,5 @@
-use anyhow::{anyhow, Result};
-use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use anyhow::{Result, anyhow};
+use base64::{Engine, engine::general_purpose::STANDARD as BASE64};
 use rand::Rng;
 use reqwest::Client;
 use serde::{Deserialize, Serialize};
@@ -134,7 +134,10 @@ impl CouchDbClient {
                 !row.id.starts_with("h:")
                     && !row.id.starts_with("_")
                     && !row.value.deleted
-                    && !row.doc.as_ref().is_some_and(|d| d.get("deleted") == Some(&serde_json::Value::Bool(true)))
+                    && !row
+                        .doc
+                        .as_ref()
+                        .is_some_and(|d| d.get("deleted") == Some(&serde_json::Value::Bool(true)))
             })
             .map(|row| row.id)
             .collect();
@@ -404,12 +407,7 @@ impl CouchDbClient {
         self.save_note(id, &new_content).await
     }
 
-    pub async fn insert_lines(
-        &self,
-        id: &str,
-        line: usize,
-        content: &str,
-    ) -> Result<SaveResponse> {
+    pub async fn insert_lines(&self, id: &str, line: usize, content: &str) -> Result<SaveResponse> {
         let existing = self.get_note(id).await?;
         let current_content = self.decode_content(&existing).await?;
 
@@ -440,7 +438,11 @@ impl CouchDbClient {
         let lines: Vec<&str> = current_content.lines().collect();
 
         if start_line > lines.len() {
-            return Err(anyhow!("start_line {} is past end of file ({} lines)", start_line, lines.len()));
+            return Err(anyhow!(
+                "start_line {} is past end of file ({} lines)",
+                start_line,
+                lines.len()
+            ));
         }
 
         // keep lines before start and after end (1-indexed, inclusive range)

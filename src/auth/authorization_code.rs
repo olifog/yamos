@@ -2,10 +2,10 @@ use super::handlers::OAuthAppState;
 use super::traits::{CodeChallengeMethod, ResponseType};
 use axum::{
     extract::{Query, State},
-    http::{header, HeaderMap, StatusCode},
+    http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
 };
-use base64::{engine::general_purpose::URL_SAFE_NO_PAD, Engine};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
@@ -210,7 +210,10 @@ impl AuthorizationStore {
         order.retain(|code| !expired.contains(code));
 
         if !expired.is_empty() {
-            tracing::debug!("cleaned up {} expired pending authorisations", expired.len());
+            tracing::debug!(
+                "cleaned up {} expired pending authorisations",
+                expired.len()
+            );
         }
     }
 
@@ -293,7 +296,9 @@ pub async fn authorize_handler(
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
-        "default-src 'self'; style-src 'unsafe-inline'".parse().unwrap(),
+        "default-src 'self'; style-src 'unsafe-inline'"
+            .parse()
+            .unwrap(),
     );
     headers.insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
     headers.insert(header::X_FRAME_OPTIONS, "DENY".parse().unwrap());
@@ -314,7 +319,11 @@ pub async fn authorize_approval_handler(
         Some(p) => p,
         None => {
             tracing::warn!("Authorization code not found or expired: {}", code);
-            return (StatusCode::BAD_REQUEST, "Authorization session expired or invalid").into_response();
+            return (
+                StatusCode::BAD_REQUEST,
+                "Authorization session expired or invalid",
+            )
+                .into_response();
         }
     };
 
@@ -332,7 +341,9 @@ pub async fn authorize_approval_handler(
     let auth_code = Uuid::new_v4().to_string();
 
     // Store the authorization code (reuse temp code storage)
-    store.store_pending(auth_code.clone(), pending.clone()).await;
+    store
+        .store_pending(auth_code.clone(), pending.clone())
+        .await;
 
     // redirect back with the authorization code
     let mut redirect_url = pending.redirect_uri.clone();
@@ -359,7 +370,12 @@ pub fn verify_pkce(code_verifier: &str, code_challenge: &str) -> bool {
     URL_SAFE_NO_PAD.encode(hash) == code_challenge
 }
 
-fn error_redirect(redirect_uri: &str, error: &str, description: &str, state: Option<&str>) -> Response {
+fn error_redirect(
+    redirect_uri: &str,
+    error: &str,
+    description: &str,
+    state: Option<&str>,
+) -> Response {
     let mut url = redirect_uri.to_string();
     url.push_str(if url.contains('?') { "&" } else { "?" });
     url.push_str(&format!(

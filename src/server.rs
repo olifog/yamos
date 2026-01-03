@@ -1,8 +1,9 @@
 use crate::couchdb::CouchDbClient;
 use rmcp::{
+    ErrorData as McpError, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
     model::*,
-    schemars, tool, tool_handler, tool_router, ErrorData as McpError, ServerHandler,
+    schemars, tool, tool_handler, tool_router,
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
@@ -23,7 +24,9 @@ fn validate_note_path(path: &str) -> Result<(), McpError> {
         .find(|c| !c.is_alphanumeric() && !" -_./()'".contains(*c));
 
     if let Some(c) = invalid_char {
-        return Err(mcp_error(format!("Note path contains invalid character: '{c}'")));
+        return Err(mcp_error(format!(
+            "Note path contains invalid character: '{c}'"
+        )));
     }
 
     Ok(())
@@ -68,7 +71,9 @@ pub struct AppendNoteRequest {
 pub struct InsertLinesRequest {
     #[schemars(description = "Path to the note")]
     pub path: String,
-    #[schemars(description = "Line number to insert at (1-indexed, content goes before this line)")]
+    #[schemars(
+        description = "Line number to insert at (1-indexed, content goes before this line)"
+    )]
     pub line: usize,
     #[schemars(description = "Content to insert (can be multiple lines)")]
     pub content: String,
@@ -278,7 +283,9 @@ impl YamosServer {
         validate_note_path(&req.path)?;
 
         if req.line == 0 {
-            return Err(mcp_error("Line number must be at least 1 (lines are 1-indexed)"));
+            return Err(mcp_error(
+                "Line number must be at least 1 (lines are 1-indexed)",
+            ));
         }
 
         self.db
@@ -292,7 +299,7 @@ impl YamosServer {
         ))]))
     }
 
-    // TODO: return what text was deleted. 
+    // TODO: return what text was deleted.
     // TODO: implement a "safe_delete_lines" that requires that the exact text to be deleted is
     // also specified
     #[tool(
@@ -305,7 +312,9 @@ impl YamosServer {
         validate_note_path(&req.path)?;
 
         if req.start_line == 0 || req.end_line == 0 {
-            return Err(mcp_error("Line numbers must be at least 1 (lines are 1-indexed)"));
+            return Err(mcp_error(
+                "Line numbers must be at least 1 (lines are 1-indexed)",
+            ));
         }
         if req.start_line > req.end_line {
             return Err(mcp_error("start_line cannot be greater than end_line"));
@@ -426,9 +435,7 @@ impl YamosServer {
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
 
-    #[tool(
-        description = "Delete multiple notes at once, with per-note success/failure reporting."
-    )]
+    #[tool(description = "Delete multiple notes at once, with per-note success/failure reporting.")]
     async fn batch_delete_notes(
         &self,
         Parameters(req): Parameters<BatchDeleteNotesRequest>,

@@ -1,11 +1,11 @@
-use super::authorization_code::{verify_pkce, AuthorizationStore, ClientRegistry};
-use super::traits::GrantType;
 use super::OAuthService;
+use super::authorization_code::{AuthorizationStore, ClientRegistry, verify_pkce};
+use super::traits::GrantType;
 use axum::{
+    Form,
     extract::State,
     http::{HeaderMap, StatusCode},
     response::{IntoResponse, Json, Response},
-    Form,
 };
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
@@ -67,7 +67,7 @@ async fn handle_authorization_code_grant(state: &OAuthAppState, req: &TokenReque
                 StatusCode::BAD_REQUEST,
                 "invalid_request",
                 Some("Missing required parameter: code"),
-            )
+            );
         }
     };
 
@@ -78,7 +78,7 @@ async fn handle_authorization_code_grant(state: &OAuthAppState, req: &TokenReque
                 StatusCode::BAD_REQUEST,
                 "invalid_request",
                 Some("Missing required parameter: code_verifier"),
-            )
+            );
         }
     };
 
@@ -103,7 +103,7 @@ async fn handle_authorization_code_grant(state: &OAuthAppState, req: &TokenReque
                 StatusCode::BAD_REQUEST,
                 "invalid_request",
                 Some("Missing required parameter: redirect_uri"),
-            )
+            );
         }
     };
 
@@ -159,7 +159,7 @@ async fn handle_client_credentials_grant(state: &OAuthAppState, req: &TokenReque
                 StatusCode::BAD_REQUEST,
                 "invalid_request",
                 Some("Missing required parameter: client_id"),
-            )
+            );
         }
     };
 
@@ -170,7 +170,7 @@ async fn handle_client_credentials_grant(state: &OAuthAppState, req: &TokenReque
                 StatusCode::BAD_REQUEST,
                 "invalid_request",
                 Some("Missing required parameter: client_secret"),
-            )
+            );
         }
     };
 

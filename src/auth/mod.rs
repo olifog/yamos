@@ -6,16 +6,18 @@ mod token;
 mod traits;
 
 pub use authorization_code::{
-    authorize_approval_handler, authorize_handler, AuthorizationStore, ClientRegistry,
+    AuthorizationStore, ClientRegistry, authorize_approval_handler, authorize_handler,
 };
 pub use client_credentials::StaticClientValidator;
 pub use handlers::{
-    metadata_handler, oauth_token_handler, protected_resource_metadata_handler, register_handler,
-    OAuthAppState,
+    OAuthAppState, metadata_handler, oauth_token_handler, protected_resource_metadata_handler,
+    register_handler,
 };
-pub use middleware::{jwt_auth_middleware, legacy_auth_middleware, AuthMiddlewareConfig};
+pub use middleware::{AuthMiddlewareConfig, jwt_auth_middleware, legacy_auth_middleware};
 pub use token::{JwtTokenIssuer, JwtTokenValidator};
-pub use traits::{Claims, ClientInfo, CredentialValidator, TokenIssuer, TokenResponse, TokenValidator};
+pub use traits::{
+    Claims, ClientInfo, CredentialValidator, TokenIssuer, TokenResponse, TokenValidator,
+};
 
 use anyhow::Result;
 use std::sync::Arc;
