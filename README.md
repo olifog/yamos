@@ -3,11 +3,11 @@
 ![yamos helping haiku](assets/demo.gif)
 
 you want your ai to be able to with your obsidian notes, right? remotely, right?
-via MRP, right? i gotchu
+via MCP, right? i gotchu
 
 1. set up obsidian livesync to a couchdb server
 2. connect yamos to the couchdb server
-3. connect your ai to yamos via MRP
+3. connect your ai to yamos via MCP
 4. profit
 
 tested with claude. ymmv with other ais. if it doesn't work with other ais then
