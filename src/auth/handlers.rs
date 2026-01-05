@@ -52,6 +52,11 @@ pub async fn oauth_token_handler(
     match req.grant_type {
         GrantType::AuthorizationCode => handle_authorization_code_grant(&state, &req).await,
         GrantType::ClientCredentials => handle_client_credentials_grant(&state, &req).await,
+        GrantType::Unsupported => error_response(
+            StatusCode::BAD_REQUEST,
+            "unsupported_grant_type",
+            Some("The grant type is not supported by this server"),
+        ),
     }
 }
 
@@ -310,9 +315,19 @@ pub async fn register_handler(
     // but we generate one anyway for flexibility
     let client_secret = Uuid::new_v4().to_string();
 
-    let grant_types = req
+    // filter out unsupported grant types
+    let grant_types: Vec<GrantType> = req
         .grant_types
-        .unwrap_or_else(|| vec![GrantType::AuthorizationCode]);
+        .unwrap_or_else(|| vec![GrantType::AuthorizationCode])
+        .into_iter()
+        .filter(|g| !matches!(g, GrantType::Unsupported))
+        .collect();
+    // default to authorization_code if client only requested unsupported grants
+    let grant_types = if grant_types.is_empty() {
+        vec![GrantType::AuthorizationCode]
+    } else {
+        grant_types
+    };
 
     // register the client's redirect URIs so they can be validated later
     let redirect_uris = req.redirect_uris.clone().unwrap_or_default();

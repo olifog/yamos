@@ -10,6 +10,10 @@ use std::time::Duration;
 pub enum GrantType {
     AuthorizationCode,
     ClientCredentials,
+    /// catch-all for grant types we don't support (e.g., refresh_token)
+    /// Allows client registration to succeed even if client requests unsupported grants
+    #[serde(other, skip_serializing)]
+    Unsupported,
 }
 
 impl fmt::Display for GrantType {
@@ -17,6 +21,7 @@ impl fmt::Display for GrantType {
         match self {
             GrantType::AuthorizationCode => write!(f, "authorization_code"),
             GrantType::ClientCredentials => write!(f, "client_credentials"),
+            GrantType::Unsupported => write!(f, "unsupported"),
         }
     }
 }
