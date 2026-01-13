@@ -68,25 +68,17 @@ pub struct AppendNoteRequest {
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct InsertLinesRequest {
+pub struct EditNoteRequest {
     #[schemars(description = "Path to the note")]
     pub path: String,
     #[schemars(
-        description = "Line number to insert at (1-indexed, content goes before this line)"
+        description = "The exact text to find and replace. Must appear exactly once in the note. Include surrounding context (a few lines before/after) to ensure uniqueness."
     )]
-    pub line: usize,
-    #[schemars(description = "Content to insert (can be multiple lines)")]
-    pub content: String,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DeleteLinesRequest {
-    #[schemars(description = "Path to the note")]
-    pub path: String,
-    #[schemars(description = "First line to delete (1-indexed, inclusive)")]
-    pub start_line: usize,
-    #[schemars(description = "Last line to delete (1-indexed, inclusive)")]
-    pub end_line: usize,
+    pub old_string: String,
+    #[schemars(
+        description = "The text to replace old_string with. Include the same surrounding context, plus your changes. Can be empty to delete the old_string."
+    )]
+    pub new_string: String,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -274,64 +266,60 @@ impl YamosServer {
     }
 
     #[tool(
-        description = "Insert content at a specific line in a note. Line numbers are 1-indexed - content is inserted before the specified line. Use line 1 to insert at the start, or a line past the end to append. Note that subsequent inserts and deletes will need to take into account that later line indices will have changed."
+        description = "Edit a note by replacing old_string with new_string. The old_string must appear exactly once in the note - include enough surrounding context to make it unique. To insert text, include the surrounding lines in both old_string and new_string, with your new content added in new_string. To delete text, include it in old_string with surrounding context, and omit it from new_string."
     )]
-    async fn insert_lines(
+    async fn edit_note(
         &self,
-        Parameters(req): Parameters<InsertLinesRequest>,
+        Parameters(req): Parameters<EditNoteRequest>,
     ) -> Result<CallToolResult, McpError> {
         validate_note_path(&req.path)?;
 
-        if req.line == 0 {
+        if req.old_string.is_empty() {
             return Err(mcp_error(
-                "Line number must be at least 1 (lines are 1-indexed)",
+                "old_string cannot be empty - include surrounding context to identify where to make changes",
             ));
         }
 
-        self.db
-            .insert_lines(&req.path, req.line, &req.content)
+        if req.old_string == req.new_string {
+            return Err(mcp_error("old_string and new_string are identical"));
+        }
+
+        let doc = self
+            .db
+            .get_note(&req.path)
             .await
             .map_err(|e| mcp_error(e.to_string()))?;
 
-        Ok(CallToolResult::success(vec![Content::text(format!(
-            "Successfully inserted into {} at line {}",
-            req.path, req.line
-        ))]))
-    }
-
-    // TODO: return what text was deleted.
-    // TODO: implement a "safe_delete_lines" that requires that the exact text to be deleted is
-    // also specified
-    #[tool(
-        description = "Delete a range of lines from a note. Line numbers are 1-indexed and inclusive on both ends. Note that subsequent inserts and deletes will need to take into account that later line indices will have changed."
-    )]
-    async fn delete_lines(
-        &self,
-        Parameters(req): Parameters<DeleteLinesRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        validate_note_path(&req.path)?;
-
-        if req.start_line == 0 || req.end_line == 0 {
-            return Err(mcp_error(
-                "Line numbers must be at least 1 (lines are 1-indexed)",
-            ));
-        }
-        if req.start_line > req.end_line {
-            return Err(mcp_error("start_line cannot be greater than end_line"));
-        }
-
-        self.db
-            .delete_lines(&req.path, req.start_line, req.end_line)
+        let content = self
+            .db
+            .decode_content(&doc)
             .await
             .map_err(|e| mcp_error(e.to_string()))?;
 
-        let count = req.end_line - req.start_line + 1;
-        Ok(CallToolResult::success(vec![Content::text(format!(
-            "Successfully deleted {} line{} from {}",
-            count,
-            if count == 1 { "" } else { "s" },
-            req.path
-        ))]))
+        // Find all occurrences of old_string
+        let matches: Vec<_> = content.match_indices(&req.old_string).collect();
+
+        match matches.len() {
+            0 => Err(mcp_error(
+                "old_string not found in note - make sure it matches exactly, including whitespace",
+            )),
+            1 => {
+                let new_content = content.replacen(&req.old_string, &req.new_string, 1);
+                self.db
+                    .save_note(&req.path, &new_content)
+                    .await
+                    .map_err(|e| mcp_error(e.to_string()))?;
+
+                Ok(CallToolResult::success(vec![Content::text(format!(
+                    "Successfully edited {}",
+                    req.path
+                ))]))
+            }
+            n => Err(mcp_error(format!(
+                "old_string appears {} times in the note - include more surrounding context to make it unique",
+                n
+            ))),
+        }
     }
 
     #[tool(description = "Delete a note from the Obsidian vault")]
@@ -514,7 +502,7 @@ impl ServerHandler for YamosServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                "Obsidian vault access via CouchDB/LiveSync. Use tools to list, read, write, append, insert_lines, delete_lines, or delete notes. Batch operations available for multi-note ops.".to_string(),
+                "Obsidian vault access via CouchDB/LiveSync. Use tools to list, read, write, edit, append, or delete notes. For edit_note, include surrounding context in old_string to ensure uniqueness. Batch operations available for multi-note ops.".to_string(),
             ),
         }
     }
