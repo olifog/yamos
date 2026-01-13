@@ -431,7 +431,9 @@ pub async fn authorize_approval_handler(
         redirect_url
     );
 
-    Redirect::temporary(&redirect_url).into_response()
+    // Use 303 See Other to ensure the browser does a GET to the callback
+    // (307 would preserve the POST method and body, which breaks OAuth)
+    Redirect::to(&redirect_url).into_response()
 }
 
 /// PKCE verification - S256 only (as per OAuth 2.1)
@@ -458,7 +460,7 @@ fn error_redirect(
     if let Some(s) = state {
         url.push_str(&format!("&state={}", s));
     }
-    Redirect::temporary(&url).into_response()
+    Redirect::to(&url).into_response()
 }
 
 fn consent_page(client_id: &str, code: &str, require_pin: bool) -> String {
