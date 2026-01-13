@@ -255,7 +255,11 @@ pub async fn protected_resource_metadata_handler(State(state): State<OAuthAppSta
         resource: state.base_url.clone(),
         authorization_servers: vec![state.base_url], // we're our own auth server
     };
-    (StatusCode::OK, Json(metadata)).into_response()
+
+    let mut headers = HeaderMap::new();
+    headers.insert("MCP-Protocol-Version", "2025-03-26".parse().unwrap());
+
+    (StatusCode::OK, headers, Json(metadata)).into_response()
 }
 
 /// Auth server metadata (RFC 8414)
@@ -307,10 +311,15 @@ pub struct ClientRegistrationRequest {
 #[derive(Debug, Serialize)]
 pub struct ClientRegistrationResponse {
     pub client_id: String,
-    pub client_secret: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub client_secret: Option<String>,
     pub client_id_issued_at: i64,
     pub client_secret_expires_at: i64,
     pub grant_types: Vec<GrantType>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub redirect_uris: Option<Vec<String>>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub token_endpoint_auth_method: Option<String>,
 }
 
 /// Dynamic client registration (RFC 7591)
@@ -353,17 +362,23 @@ pub async fn register_handler(
         .client_registry
         .register(
             client_id.clone(),
-            redirect_uris,
+            redirect_uris.clone(),
             Some(client_secret.clone()),
         )
         .await;
 
     let response = ClientRegistrationResponse {
         client_id: client_id.clone(),
-        client_secret,
+        client_secret: Some(client_secret),
         client_id_issued_at: chrono::Utc::now().timestamp(),
         client_secret_expires_at: 0, // Never expires in this implementation
         grant_types,
+        redirect_uris: if redirect_uris.is_empty() {
+            None
+        } else {
+            Some(redirect_uris)
+        },
+        token_endpoint_auth_method: Some("none".to_string()),
     };
 
     tracing::info!(
