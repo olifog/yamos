@@ -311,6 +311,7 @@ async fn run_sse_server_with_oauth(
     use tower_governor::{
         GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
     };
+    use tower_http::cors::{Any, CorsLayer};
 
     let bind_addr = format!("{}:{}", host, port);
 
@@ -401,6 +402,10 @@ async fn run_sse_server_with_oauth(
             get(auth::protected_resource_metadata_handler),
         )
         .route(
+            "/.well-known/oauth-protected-resource/sse",
+            get(auth::protected_resource_metadata_handler),
+        )
+        .route(
             "/.well-known/oauth-authorization-server",
             get(auth::metadata_handler),
         )
@@ -443,11 +448,18 @@ async fn run_sse_server_with_oauth(
         .merge(rate_limited_auth_routes)
         .merge(protected_routes);
 
+    // CORS layer - permissive for MCP clients like poke.com
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any)
+        .expose_headers(Any);
+
     // nest under base_path if set
     let app = if base_path.is_empty() {
-        all_routes
+        all_routes.layer(cors)
     } else {
-        Router::new().nest(base_path, all_routes)
+        Router::new().nest(base_path, all_routes).layer(cors)
     };
 
     let listener = tokio::net::TcpListener::bind(&bind_addr).await?;

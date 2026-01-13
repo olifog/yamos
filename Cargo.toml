@@ -12,6 +12,7 @@ rmcp = { version = "0.12", features = ["server", "client", "transport-io", "tran
 
 axum = "0.8"
 tower = "0.5"
+tower-http = { version = "0.6", features = ["cors"] }
 
 tokio = { version = "1", features = ["full", "signal"] }
 tokio-util = "0.7"
