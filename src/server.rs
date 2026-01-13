@@ -85,12 +85,6 @@ pub struct EditNoteRequest {
     pub new_string: String,
 }
 
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct DeleteNoteRequest {
-    #[schemars(description = "Path to the note to delete")]
-    pub path: String,
-}
-
 // Batch operation request types
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -111,12 +105,6 @@ pub struct BatchWriteOp {
 pub struct BatchWriteNotesRequest {
     #[schemars(description = "List of notes to write")]
     pub notes: Vec<BatchWriteOp>,
-}
-
-#[derive(Debug, Deserialize, schemars::JsonSchema)]
-pub struct BatchDeleteNotesRequest {
-    #[schemars(description = "List of note paths to delete")]
-    pub paths: Vec<String>,
 }
 
 #[derive(Debug, Deserialize, schemars::JsonSchema)]
@@ -147,14 +135,6 @@ pub struct BatchReadResult {
 
 #[derive(Debug, Serialize)]
 pub struct BatchWriteResult {
-    pub path: String,
-    pub success: bool,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub error: Option<String>,
-}
-
-#[derive(Debug, Serialize)]
-pub struct BatchDeleteResult {
     pub path: String,
     pub success: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -350,24 +330,6 @@ impl YamosServer {
         }
     }
 
-    #[tool(description = "Delete a note from the Obsidian vault")]
-    async fn delete_note(
-        &self,
-        Parameters(req): Parameters<DeleteNoteRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        validate_note_path(&req.path)?;
-
-        self.db
-            .delete_note(&req.path)
-            .await
-            .map_err(|e| mcp_error(e.to_string()))?;
-
-        Ok(CallToolResult::success(vec![Content::text(format!(
-            "Successfully deleted {}",
-            req.path
-        ))]))
-    }
-
     #[tool(
         description = "Read multiple notes at once. Returns content for each note, with per-note success/failure reporting."
     )]
@@ -439,40 +401,6 @@ impl YamosServer {
                     },
                     Ok(_) => BatchWriteResult {
                         path: note.path,
-                        success: true,
-                        error: None,
-                    },
-                },
-            };
-            results.push(result);
-        }
-
-        let json = serde_json::to_string_pretty(&results).map_err(|e| mcp_error(e.to_string()))?;
-        Ok(CallToolResult::success(vec![Content::text(json)]))
-    }
-
-    #[tool(description = "Delete multiple notes at once, with per-note success/failure reporting.")]
-    async fn batch_delete_notes(
-        &self,
-        Parameters(req): Parameters<BatchDeleteNotesRequest>,
-    ) -> Result<CallToolResult, McpError> {
-        let mut results = Vec::with_capacity(req.paths.len());
-
-        for path in req.paths {
-            let result = match validate_note_path(&path) {
-                Err(e) => BatchDeleteResult {
-                    path,
-                    success: false,
-                    error: Some(e.message.to_string()),
-                },
-                Ok(()) => match self.db.delete_note(&path).await {
-                    Err(e) => BatchDeleteResult {
-                        path,
-                        success: false,
-                        error: Some(e.to_string()),
-                    },
-                    Ok(()) => BatchDeleteResult {
-                        path,
                         success: true,
                         error: None,
                     },
@@ -561,7 +489,7 @@ impl ServerHandler for YamosServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                "Obsidian vault access via CouchDB/LiveSync. Use search_notes to find notes by fuzzy matching on titles and content. Use tools to list, read, write, edit, append, or delete notes. For edit_note, include surrounding context in old_string to ensure uniqueness. Batch operations available for multi-note ops.".to_string(),
+                "Obsidian vault access via CouchDB/LiveSync. Use search_notes to find notes by fuzzy matching on titles and content. Use tools to list, read, write, edit, or append notes. For edit_note, include surrounding context in old_string to ensure uniqueness. Batch operations available for multi-note ops.".to_string(),
             ),
         }
     }

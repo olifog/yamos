@@ -427,6 +427,7 @@ impl CouchDbClient {
     }
 
     /// soft-deletes a note by setting deleted: true (livesync expects this, not couchDB tombstones)
+    #[allow(dead_code)] // Kept for potential admin use, but not exposed to AI agents
     pub async fn delete_note(&self, id: &str) -> Result<()> {
         let existing = self.get_note(id).await?;
 
