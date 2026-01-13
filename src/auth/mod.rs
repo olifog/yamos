@@ -8,7 +8,7 @@ mod traits;
 pub use authorization_code::{
     AuthorizationStore, ClientRegistry, authorize_approval_handler, authorize_handler,
 };
-pub use client_credentials::StaticClientValidator;
+pub use client_credentials::ClientValidator;
 pub use handlers::{
     OAuthAppState, metadata_handler, oauth_token_handler, protected_resource_metadata_handler,
     register_handler,
@@ -41,10 +41,11 @@ pub struct OAuthService {
 }
 
 impl OAuthService {
-    pub fn new(config: AuthConfig) -> Self {
-        let credential_validator = Arc::new(StaticClientValidator::new(
+    pub fn new(config: AuthConfig, client_registry: Arc<ClientRegistry>) -> Self {
+        let credential_validator = Arc::new(ClientValidator::new(
             config.client_id.clone(),
             config.client_secret.clone(),
+            client_registry,
         ));
 
         let token_issuer = Arc::new(JwtTokenIssuer::new(

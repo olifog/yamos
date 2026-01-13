@@ -48,6 +48,8 @@ pub struct RegisteredClient {
     #[allow(dead_code)]
     pub client_id: String,
     pub redirect_uris: Vec<String>,
+    /// client secret for dynamically registered clients (None for static clients)
+    pub client_secret: Option<String>,
     #[allow(dead_code)]
     pub created_at: std::time::Instant,
 }
@@ -57,17 +59,53 @@ impl ClientRegistry {
         Self::default()
     }
 
-    /// register a client with its allowed redirect URIs
-    pub async fn register(&self, client_id: String, redirect_uris: Vec<String>) {
+    /// register a client with its allowed redirect URIs and optional secret
+    pub async fn register(
+        &self,
+        client_id: String,
+        redirect_uris: Vec<String>,
+        client_secret: Option<String>,
+    ) {
         let mut clients = self.clients.write().await;
         clients.insert(
             client_id.clone(),
             RegisteredClient {
                 client_id,
                 redirect_uris,
+                client_secret,
                 created_at: std::time::Instant::now(),
             },
         );
+    }
+
+    /// validate client credentials against registry
+    /// returns Ok(()) if valid, Err with reason if not
+    pub async fn validate_credentials(
+        &self,
+        client_id: &str,
+        client_secret: &str,
+    ) -> Result<(), String> {
+        let clients = self.clients.read().await;
+        if let Some(client) = clients.get(client_id) {
+            if let Some(expected_secret) = &client.client_secret {
+                // constant-time comparison to prevent timing attacks
+                use subtle::ConstantTimeEq;
+                let matches: bool = client_secret
+                    .as_bytes()
+                    .ct_eq(expected_secret.as_bytes())
+                    .into();
+                if matches {
+                    Ok(())
+                } else {
+                    Err("invalid client_secret".to_string())
+                }
+            } else {
+                // no secret stored - this shouldn't happen for dynamic clients
+                Err("client has no secret configured".to_string())
+            }
+        } else {
+            Err("client not found".to_string())
+        }
     }
 
     /// check if a redirect_uri is valid for the given client

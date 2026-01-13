@@ -337,9 +337,9 @@ async fn run_sse_server_with_oauth(
         StreamableHttpServerConfig::default(),
     );
 
-    let oauth_service = Arc::new(auth::OAuthService::new(config));
     let auth_store = Arc::new(auth::AuthorizationStore::new());
     let client_registry = Arc::new(auth::ClientRegistry::new());
+    let oauth_service = Arc::new(auth::OAuthService::new(config, client_registry.clone()));
 
     // Combined OAuth state for all handlers
     let oauth_state = auth::OAuthAppState {

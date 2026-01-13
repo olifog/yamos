@@ -100,6 +100,22 @@ async fn handle_authorization_code_grant(state: &OAuthAppState, req: &TokenReque
         }
     };
 
+    // Verify client_id matches the original authorization request
+    if let Some(request_client_id) = &req.client_id {
+        if request_client_id != &pending.client_id {
+            tracing::warn!(
+                "client_id mismatch: expected '{}', got '{}'",
+                pending.client_id,
+                request_client_id
+            );
+            return error_response(
+                StatusCode::BAD_REQUEST,
+                "invalid_grant",
+                Some("client_id mismatch"),
+            );
+        }
+    }
+
     // Verify redirect_uri matches (must match the one from the authorization request)
     let redirect_uri = match &req.redirect_uri {
         Some(uri) => uri,
@@ -329,14 +345,16 @@ pub async fn register_handler(
         grant_types
     };
 
-    // register the client's redirect URIs so they can be validated later
+    // register the client with redirect URIs and secret
     let redirect_uris = req.redirect_uris.clone().unwrap_or_default();
-    if !redirect_uris.is_empty() {
-        state
-            .client_registry
-            .register(client_id.clone(), redirect_uris)
-            .await;
-    }
+    state
+        .client_registry
+        .register(
+            client_id.clone(),
+            redirect_uris,
+            Some(client_secret.clone()),
+        )
+        .await;
 
     let response = ClientRegistrationResponse {
         client_id: client_id.clone(),
