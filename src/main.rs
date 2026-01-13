@@ -73,6 +73,10 @@ struct Args {
     #[arg(long, env = "OAUTH_CLIENT_SECRET")]
     oauth_client_secret: Option<String>,
 
+    /// PIN required to approve OAuth authorization requests (optional, but recommended)
+    #[arg(long, env = "CONSENT_PIN")]
+    consent_pin: Option<String>,
+
     /// Authentication token for bearer SSE mode (OAuth is better)
     #[arg(long, env = "MCP_AUTH_TOKEN")]
     auth_token: Option<String>,
@@ -203,6 +207,7 @@ async fn main() -> Result<()> {
                         args.public_url.as_deref(),
                         &rate_limit,
                         &base_path,
+                        args.consent_pin.clone(),
                     )
                     .await?;
                 }
@@ -292,6 +297,7 @@ async fn run_sse_server_with_oauth(
     public_url: Option<&str>,
     rate_limit: &RateLimitConfig,
     base_path: &str,
+    consent_pin: Option<String>,
 ) -> Result<()> {
     use axum::{
         Router, middleware,
@@ -347,6 +353,7 @@ async fn run_sse_server_with_oauth(
         auth_store: auth_store.clone(),
         client_registry: client_registry.clone(),
         base_url: base_url.clone(),
+        consent_pin,
     };
 
     // Rate limiting - configurable via RATE_LIMIT_PER_SECOND and RATE_LIMIT_BURST
@@ -398,7 +405,10 @@ async fn run_sse_server_with_oauth(
             get(auth::metadata_handler),
         )
         .route("/authorize", get(auth::authorize_handler))
-        .route("/authorize/callback", get(auth::authorize_approval_handler))
+        .route(
+            "/authorize/callback",
+            post(auth::authorize_approval_handler),
+        )
         .with_state(oauth_state);
 
     // Start background task to clean up rate limiter state

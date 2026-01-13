@@ -1,6 +1,7 @@
 use super::handlers::OAuthAppState;
 use super::traits::{CodeChallengeMethod, ResponseType};
 use axum::{
+    Form,
     extract::{Query, State},
     http::{HeaderMap, StatusCode, header},
     response::{Html, IntoResponse, Redirect, Response},
@@ -10,6 +11,7 @@ use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 use url::Url;
 use uuid::Uuid;
@@ -283,6 +285,7 @@ pub struct AuthorizationRequest {
 pub struct AuthorizationApproval {
     pub code: String,
     pub approve: Option<String>,
+    pub pin: Option<String>,
 }
 
 /// Shows consent page - user clicks approve/deny
@@ -336,7 +339,8 @@ pub async fn authorize_handler(
     store.cleanup_expired().await;
 
     // Show consent page with security headers
-    let html = consent_page(&req.client_id, &temp_code);
+    let require_pin = state.consent_pin.is_some();
+    let html = consent_page(&req.client_id, &temp_code, require_pin);
     let mut headers = HeaderMap::new();
     headers.insert(
         header::CONTENT_SECURITY_POLICY,
@@ -350,10 +354,10 @@ pub async fn authorize_handler(
     (headers, Html(html)).into_response()
 }
 
-/// Handles the approve/deny button click
+/// Handles the approve/deny form submission
 pub async fn authorize_approval_handler(
     State(state): State<OAuthAppState>,
-    Query(approval): Query<AuthorizationApproval>,
+    Form(approval): Form<AuthorizationApproval>,
 ) -> Response {
     let store = &state.auth_store;
     let code = &approval.code;
@@ -379,6 +383,28 @@ pub async fn authorize_approval_handler(
             "User denied the authorization request",
             pending.state.as_deref(),
         );
+    }
+
+    // Verify PIN if configured
+    if let Some(expected_pin) = &state.consent_pin {
+        let provided_pin = approval.pin.as_deref().unwrap_or("");
+        let pin_matches: bool = provided_pin
+            .as_bytes()
+            .ct_eq(expected_pin.as_bytes())
+            .into();
+
+        if !pin_matches {
+            tracing::warn!(
+                "Invalid PIN provided for authorization of client {}",
+                pending.client_id
+            );
+            return error_redirect(
+                &pending.redirect_uri,
+                "access_denied",
+                "Invalid PIN",
+                pending.state.as_deref(),
+            );
+        }
     }
 
     // Generate the actual authorization code
@@ -433,7 +459,16 @@ fn error_redirect(
     Redirect::temporary(&url).into_response()
 }
 
-fn consent_page(client_id: &str, code: &str) -> String {
+fn consent_page(client_id: &str, code: &str, require_pin: bool) -> String {
+    let pin_field = if require_pin {
+        r#"<div class="pin-field">
+            <label for="pin">PIN:</label>
+            <input type="password" id="pin" name="pin" required autocomplete="off" />
+        </div>"#
+    } else {
+        ""
+    };
+
     format!(
         r#"<!DOCTYPE html>
 <html>
@@ -456,7 +491,23 @@ fn consent_page(client_id: &str, code: &str) -> String {
             font-family: monospace;
             word-break: break-all;
         }}
-        .buttons {{ margin-top: 30px; }}
+        .pin-field {{
+            margin: 20px 0;
+        }}
+        .pin-field label {{
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }}
+        .pin-field input {{
+            padding: 10px;
+            font-size: 16px;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            width: 150px;
+            text-align: center;
+        }}
+        .buttons {{ margin-top: 20px; }}
         button {{
             padding: 12px 24px;
             margin: 5px;
@@ -478,21 +529,21 @@ fn consent_page(client_id: &str, code: &str) -> String {
 <body>
     <h1>Authorize Application</h1>
     <p>The following application is requesting access to your MCP server:</p>
-    <div class="client-id">{}</div>
+    <div class="client-id">{client_id}</div>
     <p>Do you want to allow this application to access your Obsidian notes?</p>
-    <div class="buttons">
-        <a href="/authorize/callback?code={}&approve=true">
-            <button class="approve">Approve</button>
-        </a>
-        <a href="/authorize/callback?code={}&approve=false">
-            <button class="deny">Deny</button>
-        </a>
-    </div>
+    <form method="POST" action="/authorize/callback">
+        <input type="hidden" name="code" value="{code}" />
+        {pin_field}
+        <div class="buttons">
+            <button type="submit" name="approve" value="true" class="approve">Approve</button>
+            <button type="submit" name="approve" value="false" class="deny">Deny</button>
+        </div>
+    </form>
 </body>
 </html>"#,
-        html_escape(client_id),
-        code,
-        code
+        client_id = html_escape(client_id),
+        code = code,
+        pin_field = pin_field
     )
 }
 

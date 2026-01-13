@@ -17,6 +17,8 @@ pub struct OAuthAppState {
     pub auth_store: Arc<AuthorizationStore>,
     pub client_registry: Arc<ClientRegistry>,
     pub base_url: String,
+    /// Optional PIN required to approve authorization requests
+    pub consent_pin: Option<String>,
 }
 
 /// OAuth 2.0 token request (supports both grant types)
