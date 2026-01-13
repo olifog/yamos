@@ -1,12 +1,16 @@
 mod auth;
 mod couchdb;
+mod search;
 mod server;
 
 use anyhow::Result;
 use clap::{Parser, ValueEnum};
 use rmcp::ServiceExt;
+use search::{ChangesWatcher, NoteEntry, SearchIndex, extract_title};
 use server::YamosServer;
 use std::sync::Arc;
+use tokio::sync::RwLock;
+use tokio_util::sync::CancellationToken;
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
 
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -125,8 +129,44 @@ async fn main() -> Result<()> {
     db.test_connection().await?;
     tracing::info!("Successfully connected to CouchDB");
 
+    // Initialize search index
+    tracing::info!("Loading search index...");
+    let search_index = Arc::new(RwLock::new(SearchIndex::new()));
+
+    // Initial load of all notes
+    {
+        let (notes, last_seq) = db.get_all_notes_with_content().await?;
+        let mut index = search_index.write().await;
+
+        for (path, content, mtime) in notes {
+            let title = extract_title(&path, &content);
+            index.upsert(
+                path.clone(),
+                NoteEntry {
+                    path,
+                    title,
+                    content,
+                    mtime,
+                },
+            );
+        }
+
+        index.last_seq = last_seq;
+        tracing::info!("Search index loaded with {} notes", index.len());
+    }
+
+    // Start changes watcher in background
+    let cancel_token = CancellationToken::new();
+    let watcher = ChangesWatcher::new(db.clone(), search_index.clone());
+    let watcher_cancel = cancel_token.clone();
+    let watcher_handle = tokio::spawn(async move {
+        if let Err(e) = watcher.run(watcher_cancel).await {
+            tracing::error!("Changes watcher error: {}", e);
+        }
+    });
+
     // Create the MCP server
-    let server = YamosServer::new(db);
+    let server = YamosServer::new(db, search_index);
 
     match args.transport {
         TransportMode::Stdio => {
@@ -190,6 +230,11 @@ async fn main() -> Result<()> {
             }
         }
     }
+
+    // Shutdown: cancel the changes watcher
+    tracing::info!("Shutting down changes watcher...");
+    cancel_token.cancel();
+    let _ = watcher_handle.await;
 
     Ok(())
 }

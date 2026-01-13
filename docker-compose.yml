@@ -1,0 +1,26 @@
+services:
+  yamos:
+    build: .
+    restart: unless-stopped
+    environment:
+      - VIRTUAL_HOST=yamos.yourdomain.com
+      - LETSENCRYPT_HOST=yamos.yourdomain.com
+      - MCP_HOST=0.0.0.0
+      - MCP_PORT=3000
+      - COUCHDB_URL=http://couchdb:5984 # or your existing container name
+      - COUCHDB_DATABASE=obsidian
+      - COUCHDB_USER=${COUCHDB_USER}
+      - COUCHDB_PASSWORD=${COUCHDB_PASSWORD}
+      - PUBLIC_URL=https://yamos.yourdomain.com
+      - OAUTH_ENABLED=true
+      - OAUTH_JWT_SECRET=${OAUTH_JWT_SECRET}
+      - OAUTH_CLIENT_ID=${OAUTH_CLIENT_ID}
+      - OAUTH_CLIENT_SECRET=${OAUTH_CLIENT_SECRET}
+    expose:
+      - "3000"
+    networks:
+      - nginx-proxy # your nginx-proxy network
+
+networks:
+  nginx-proxy:
+    external: true

@@ -1,4 +1,5 @@
 use crate::couchdb::CouchDbClient;
+use crate::search::{SearchIndex, SearchOptions};
 use rmcp::{
     ErrorData as McpError, ServerHandler,
     handler::server::{router::tool::ToolRouter, wrapper::Parameters},
@@ -7,6 +8,8 @@ use rmcp::{
 };
 use serde::{Deserialize, Serialize};
 use std::borrow::Cow;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 /// Validate a note path to prevent path traversal and ensure it's a valid Obsidian note path.
 fn validate_note_path(path: &str) -> Result<(), McpError> {
@@ -35,6 +38,7 @@ fn validate_note_path(path: &str) -> Result<(), McpError> {
 #[derive(Clone)]
 pub struct YamosServer {
     db: CouchDbClient,
+    search_index: Arc<RwLock<SearchIndex>>,
     tool_router: ToolRouter<Self>,
 }
 
@@ -165,6 +169,29 @@ pub struct BatchAppendResult {
     pub error: Option<String>,
 }
 
+// Search request/response types
+
+#[derive(Debug, Deserialize, schemars::JsonSchema)]
+pub struct SearchNotesRequest {
+    #[schemars(description = "Search query (fuzzy matching)")]
+    pub query: String,
+
+    #[schemars(description = "Search note content in addition to titles (default: true)")]
+    pub search_content: Option<bool>,
+
+    #[schemars(description = "Maximum number of results (default: 20)")]
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct SearchResultResponse {
+    pub path: String,
+    pub title: String,
+    pub score: u32,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub snippet: Option<String>,
+}
+
 fn mcp_error(msg: impl Into<String>) -> McpError {
     McpError {
         code: ErrorCode::INTERNAL_ERROR,
@@ -175,9 +202,10 @@ fn mcp_error(msg: impl Into<String>) -> McpError {
 
 #[tool_router]
 impl YamosServer {
-    pub fn new(db: CouchDbClient) -> Self {
+    pub fn new(db: CouchDbClient, search_index: Arc<RwLock<SearchIndex>>) -> Self {
         Self {
             db,
+            search_index,
             tool_router: Self::tool_router(),
         }
     }
@@ -492,6 +520,37 @@ impl YamosServer {
         let json = serde_json::to_string_pretty(&results).map_err(|e| mcp_error(e.to_string()))?;
         Ok(CallToolResult::success(vec![Content::text(json)]))
     }
+
+    #[tool(
+        description = "Fuzzy search notes by title and/or content. Returns ranked results with relevance scores. Use this to find notes when you don't know the exact path."
+    )]
+    async fn search_notes(
+        &self,
+        Parameters(req): Parameters<SearchNotesRequest>,
+    ) -> Result<CallToolResult, McpError> {
+        let index = self.search_index.read().await;
+
+        let results = index.search(
+            &req.query,
+            SearchOptions {
+                limit: req.limit.unwrap_or(20),
+                search_content: req.search_content.unwrap_or(true),
+            },
+        );
+
+        let response: Vec<SearchResultResponse> = results
+            .into_iter()
+            .map(|r| SearchResultResponse {
+                path: r.path,
+                title: r.title,
+                score: r.score,
+                snippet: r.snippet,
+            })
+            .collect();
+
+        let json = serde_json::to_string_pretty(&response).map_err(|e| mcp_error(e.to_string()))?;
+        Ok(CallToolResult::success(vec![Content::text(json)]))
+    }
 }
 
 #[tool_handler]
@@ -502,7 +561,7 @@ impl ServerHandler for YamosServer {
             capabilities: ServerCapabilities::builder().enable_tools().build(),
             server_info: Implementation::from_build_env(),
             instructions: Some(
-                "Obsidian vault access via CouchDB/LiveSync. Use tools to list, read, write, edit, append, or delete notes. For edit_note, include surrounding context in old_string to ensure uniqueness. Batch operations available for multi-note ops.".to_string(),
+                "Obsidian vault access via CouchDB/LiveSync. Use search_notes to find notes by fuzzy matching on titles and content. Use tools to list, read, write, edit, append, or delete notes. For edit_note, include surrounding context in old_string to ensure uniqueness. Batch operations available for multi-note ops.".to_string(),
             ),
         }
     }

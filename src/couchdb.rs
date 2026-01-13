@@ -104,6 +104,21 @@ impl CouchDbClient {
         })
     }
 
+    /// Get the full database URL (for changes feed, etc.)
+    pub fn db_url(&self) -> String {
+        format!("{}/{}", self.base_url, self.database)
+    }
+
+    /// Make an authenticated GET request
+    pub async fn get(&self, url: &str) -> Result<reqwest::Response> {
+        Ok(self
+            .client
+            .get(url)
+            .header("Authorization", &self.auth_header)
+            .send()
+            .await?)
+    }
+
     fn doc_url(&self, doc_id: &str) -> String {
         format!("{}/{}/{}", self.base_url, self.database, urlencode(doc_id))
     }
@@ -471,5 +486,119 @@ impl CouchDbClient {
         }
 
         Ok(())
+    }
+
+    /// Fetch all notes with their content in a single bulk operation.
+    /// Returns (path, content, mtime) tuples and the last sequence number.
+    pub async fn get_all_notes_with_content(
+        &self,
+    ) -> Result<(Vec<(String, String, u64)>, Option<String>)> {
+        // First, get the current update seq
+        let db_info_url = format!("{}/{}", self.base_url, self.database);
+        let db_info_response = self
+            .client
+            .get(&db_info_url)
+            .header("Authorization", &self.auth_header)
+            .send()
+            .await?;
+
+        let db_info: serde_json::Value = db_info_response.json().await?;
+        let last_seq = db_info
+            .get("update_seq")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                db_info
+                    .get("update_seq")
+                    .and_then(|v| v.as_u64())
+                    .map(|n| n.to_string())
+            });
+
+        // Fetch all documents
+        let url = format!(
+            "{}/{}/_all_docs?include_docs=true",
+            self.base_url, self.database
+        );
+
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", &self.auth_header)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let body = response.text().await.unwrap_or_default();
+            return Err(anyhow!(
+                "Failed to fetch all documents: {} - {}",
+                status,
+                body
+            ));
+        }
+
+        let all_docs: AllDocsResponse = response.json().await?;
+
+        // Separate notes from chunks
+        let mut notes: Vec<NoteDoc> = Vec::new();
+        let mut chunks: std::collections::HashMap<String, String> =
+            std::collections::HashMap::new();
+
+        for row in all_docs.rows {
+            // Skip deleted docs
+            if row.value.deleted {
+                continue;
+            }
+
+            if row.id.starts_with("h:") {
+                // This is a chunk
+                if let Some(doc) = row.doc
+                    && let Ok(leaf) = serde_json::from_value::<LeafDoc>(doc)
+                {
+                    chunks.insert(leaf.id.clone(), leaf.data);
+                }
+            } else if !row.id.starts_with('_') {
+                // This is a note (not a system doc)
+                if let Some(doc) = row.doc
+                    && let Ok(note) = serde_json::from_value::<NoteDoc>(doc)
+                {
+                    // Skip soft-deleted notes
+                    if note.deleted != Some(true) {
+                        notes.push(note);
+                    }
+                }
+            }
+        }
+
+        // Reassemble notes from chunks (or decode legacy format)
+        let mut results = Vec::with_capacity(notes.len());
+
+        for note in notes {
+            let content = if note.doc_type == "notes" {
+                // Legacy format: base64 encoded data in document
+                match BASE64.decode(&note.data) {
+                    Ok(bytes) => String::from_utf8(bytes).unwrap_or_default(),
+                    Err(e) => {
+                        tracing::warn!("Failed to decode legacy note {}: {}", note.id, e);
+                        String::new()
+                    }
+                }
+            } else {
+                // Chunked format: reassemble from chunks
+                let mut content = String::new();
+                for chunk_id in &note.children {
+                    if let Some(chunk_data) = chunks.get(chunk_id) {
+                        content.push_str(chunk_data);
+                    } else {
+                        tracing::warn!("Missing chunk {} for note {}", chunk_id, note.id);
+                    }
+                }
+                content
+            };
+
+            results.push((note.id, content, note.mtime));
+        }
+
+        Ok((results, last_seq))
     }
 }
