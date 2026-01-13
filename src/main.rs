@@ -428,8 +428,11 @@ async fn run_sse_server_with_oauth(
     };
 
     // protected routes - jwt required, with rate limiting
+    // Mount at both "/" and "/sse" for compatibility with different MCP clients
+    // (some clients like poke.com expect /sse, others use root)
     let protected_routes = Router::new()
-        .route_service("/", http_service)
+        .route_service("/", http_service.clone())
+        .route_service("/sse", http_service)
         .layer(middleware::from_fn_with_state(
             auth_config,
             auth::jwt_auth_middleware,
@@ -509,7 +512,8 @@ async fn run_sse_server_legacy(
 
     let token_arc = Arc::new(token);
     let routes = Router::new()
-        .route_service("/", http_service)
+        .route_service("/", http_service.clone())
+        .route_service("/sse", http_service)
         .layer(middleware::from_fn(move |req, next| {
             auth::legacy_auth_middleware(req, next, token_arc.clone())
         }))
@@ -579,7 +583,8 @@ async fn run_sse_server_no_auth(
     );
 
     let routes = Router::new()
-        .route_service("/", http_service)
+        .route_service("/", http_service.clone())
+        .route_service("/sse", http_service)
         .layer(rate_limit_layer);
 
     let app = if base_path.is_empty() {
