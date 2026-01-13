@@ -416,12 +416,14 @@ pub async fn authorize_approval_handler(
         .await;
 
     // redirect back with the authorization code
+    // Include iss parameter per RFC 9207 for issuer identification
     let mut redirect_url = pending.redirect_uri.clone();
     redirect_url.push_str(if redirect_url.contains('?') { "&" } else { "?" });
     redirect_url.push_str(&format!("code={}", urlencoding::encode(&auth_code)));
     if let Some(state) = &pending.state {
         redirect_url.push_str(&format!("&state={}", urlencoding::encode(state)));
     }
+    redirect_url.push_str(&format!("&iss={}", urlencoding::encode(&state.base_url)));
 
     tracing::info!(
         "Authorization approved for client_id={}, redirecting to {}",
